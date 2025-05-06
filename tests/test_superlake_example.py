@@ -10,9 +10,9 @@ from datetime import date, datetime
 from pyspark.sql import SparkSession
 
 # Import the functions and classes from the main code
-from core import SuperDeltaTable, TableSaveMode, SchemaEvolution, SuperPipeline, SuperGoldPipeline, SuperSpark
-from monitoring import SuperLogger
-from core.dataframe import SuperDataframe
+from superlake.core import SuperDeltaTable, TableSaveMode, SchemaEvolution, SuperPipeline, SuperGoldPipeline, SuperSpark
+from superlake.monitoring import SuperLogger
+from superlake.core.dataframe import SuperDataframe
 
 @pytest.fixture(scope="module")
 def spark():
