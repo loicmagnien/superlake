@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="superlake",
-    version="0.1.1",
+    version="0.1.2",
     packages=find_packages(),
     install_requires=[
         "pyspark>=3.5.3",
@@ -14,7 +14,7 @@ setup(
         "mypy",
         "pytest",
     ],
-    author="Loic Magnien",
+    author="Loïc Magnien",
     author_email="loic.magnien@gmail.com",
     description="A modern, intuitive Python package for data lakehouse operations",
     long_description=open("README.md").read(),
