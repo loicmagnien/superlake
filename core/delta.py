@@ -138,6 +138,25 @@ class SuperDeltaTable:
     def database_and_table_exists(self, spark: SparkSession) -> bool:
         """Checks if the database and table exists in the catalog."""
         return self.database_exists(spark) and self.table_exists(spark)
+    
+    def register_table_in_catalog(self, spark: SparkSession):
+        """
+        Registers the table in the Spark catalog with the correct location,
+        depending on whether it is managed or external.
+        """
+        db = self.table_name.split('.')[0]
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {db}")
+        if not self.managed:
+            external_path = os.path.abspath(self.table_path)
+            spark.sql(f"CREATE TABLE IF NOT EXISTS {self.table_name} USING DELTA LOCATION '{external_path}'")
+            self.logger.info(f"Registered external Delta table {self.table_name}")
+        else:
+            managed_path = spark.conf.get("spark.sql.warehouse.dir", "spark-warehouse")
+            managed_path = re.sub(r"^file:", "", managed_path)
+            tbl = self.table_name.split('.')[1]
+            managed_path = os.path.join(managed_path, f"{db}.db", tbl)
+            spark.sql(f"CREATE TABLE IF NOT EXISTS {self.table_name} USING DELTA LOCATION '{managed_path}'")
+            self.logger.info(f"Registered managed Delta table {self.table_name}")
 
     def ensure_table_exists(self, spark: SparkSession):
         """Ensures a Delta table exists at a path, creating it if needed."""
@@ -155,17 +174,19 @@ class SuperDeltaTable:
                 self.logger.info(f"SCD columns {missing_scd_cols} are missing from table_schema but will be considered present for MergeSCD mode.")
                 # Add missing SCD columns to schema for table creation
                 effective_schema = T.StructType(self.table_schema.fields + [T.StructField(name, dtype, nullable) for name, dtype, nullable in scd_cols if name in missing_scd_cols])
+
+        # Always ensure the database exists in the catalog
+        dbs_in_catalog = [row.name for row in spark.catalog.listDatabases()]
+        if db not in dbs_in_catalog:
+            spark.sql(f"CREATE DATABASE IF NOT EXISTS {db}")
+            self.logger.info(f"Created database {db} in catalog")
+        # Check if the table exists in the catalog
+        if db in dbs_in_catalog and tbl in [row.name for row in spark.catalog.listTables(db)]:
+            self.logger.info(f"Table {db}.{tbl} already exists in catalog")
+            return
+
+        # Dealing with the case when data directory exists and is not a Delta table
         if self.managed:
-            # Always ensure the database exists in the catalog
-            dbs_in_catalog = [row.name for row in spark.catalog.listDatabases()]
-            if db not in dbs_in_catalog:
-                spark.sql(f"CREATE DATABASE IF NOT EXISTS {db}")
-                self.logger.info(f"Created database {db} in catalog")
-            # Check if the table exists in the catalog
-            if db in dbs_in_catalog and tbl in [row.name for row in spark.catalog.listTables(db)]:
-                self.logger.info(f"Table {db}.{tbl} already exists in catalog")
-                return
-            # Dealing with the case when data directory exists and is not a Delta table
             warehouse_dir = spark.conf.get("spark.sql.warehouse.dir", "spark-warehouse")
             warehouse_dir = re.sub(r"^file:", "", warehouse_dir)
             table_dir = os.path.join(warehouse_dir, f"{db}.db", tbl)
@@ -182,18 +203,19 @@ class SuperDeltaTable:
             self.logger.info(f"Created Managed Delta table {self.table_name}")
         else:
             if not self.is_delta_table_path(spark):
+                abs_path = os.path.abspath(self.table_path)
                 empty_df = spark.createDataFrame([], effective_schema)
                 (empty_df.write
                     .format("delta")
                     .mode("overwrite")
                     .option("overwriteSchema", "true")
                     .partitionBy(self.partition_cols)
-                    .save(self.table_path))
-                if not self.table_exists(spark):
-                    print(self.table_name,"ensure table exists 4")
-                    spark.sql(f"CREATE TABLE IF NOT EXISTS {self.table_name} USING DELTA LOCATION '{self.table_path}'")
-                    self.logger.info(f"Created External Delta table {self.table_name} at {self.table_path}")
-    
+                    .save(abs_path))
+                self.logger.info(f"Created External Delta table {self.table_name} at {abs_path}")
+
+        # Register the table in the catalog (for both managed and external)
+        self.register_table_in_catalog(spark)
+
     def optimize(self, spark: SparkSession):
         """Runs OPTIMIZE and ZORDER on the Delta table, with optional file size tuning."""
         self.logger.info(f"Starting optimize for table {self.table_name}.")
@@ -220,8 +242,7 @@ class SuperDeltaTable:
             return
         # Register the table in the catalog
         t0 = time.time()
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.table_name.split('.')[0]}")
-        spark.sql(f"CREATE TABLE IF NOT EXISTS {self.table_name} USING DELTA LOCATION '{self.table_path}'")
+        self.register_table_in_catalog(spark)
         t1 = time.time()
         # Changing target file size
         if self.optimize_target_file_size:
@@ -232,20 +253,19 @@ class SuperDeltaTable:
         if self.optimize_zorder_cols:
             optimize_zorder_cols_sanitized_str = ', '.join([f"`{col}`" for col in self.optimize_zorder_cols])
             optimize_sql += f" ZORDER BY ({optimize_zorder_cols_sanitized_str})"
-        t3 = time.time()
+        t2 = time.time()
         spark.sql(optimize_sql)
-        t4 = time.time()
+        t3 = time.time()
         self.logger.info(f"Optimized table {self.table_name} ({'managed' if self.managed else 'external'})")
         self.logger.metric("optimize_table_creation_duration_sec", round(t1-t0, 2))
-        self.logger.metric("optimize_table_optimization_duration_sec", round(t4-t3, 2))
-        self.logger.metric("optimize_table_total_duration_sec", round(t4-t0, 2))
+        self.logger.metric("optimize_table_optimization_duration_sec", round(t3-t2, 2))
+        self.logger.metric("optimize_table_total_duration_sec", round(t3-t0, 2))
 
 
     def vacuum(self, spark: SparkSession, retention_hours: int = 168):
         """Runs the VACUUM command on a Delta table to clean up old files."""
         t0 = time.time()
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {self.table_name.split('.')[0]}")
-        spark.sql(f"CREATE TABLE IF NOT EXISTS {self.table_name} USING DELTA LOCATION '{self.table_path}'")
+        self.register_table_in_catalog(spark)
         t1 = time.time()
         spark.sql(f"VACUUM {self.table_name} RETAIN {retention_hours} HOURS")
         t2 = time.time()
@@ -457,5 +477,6 @@ class SuperDeltaTable:
         else:
             shutil.rmtree(self.table_path, ignore_errors=True)
             self.logger.info(f"Dropped External Delta Table {self.table_name} and removed data at {self.table_path}")
+
 
         

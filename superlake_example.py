@@ -29,7 +29,7 @@ def main():
     # Bronze Customer Table
     bronze_customer = SuperDeltaTable(
         table_name="01_bronze.customer",
-        table_path="/Users/loicmagnien/Documents/GitHub/superlake/data/external-table/01_bronze/customer",
+        table_path="./data/external-table/01_bronze/customer",
         table_schema=T.StructType([
             T.StructField("customer_id", T.StringType(), False),
             T.StructField("name", T.StringType(), True),
@@ -55,7 +55,7 @@ def main():
     # Silver Customer Table
     silver_customer = SuperDeltaTable(
         table_name="02_silver.customer",
-        table_path="/Users/loicmagnien/Documents/GitHub/superlake/data/external-table/02_silver/customer",
+        table_path="./data/external-table/02_silver/customer",
         table_schema=T.StructType([
             T.StructField("customer_id", T.IntegerType(), False),
             T.StructField("name", T.StringType(), True),
@@ -94,9 +94,9 @@ def main():
         customer_source_data = [
             ("1", "John Doe", "john.doe@example.com", "US", date(2022, 1, 15)),
             ("2", "Jane Smith", "jane.smith@example.com", "FR", date(2022, 2, 20)),
-            ("3", "Pedro Alvarez", "pedro.alvarez@example.com", "ES", date(2022, 3, 10)),
+            ("3", "Pedro Alvarez", "pedro.alvarez@example.com", "EN", date(2022, 3, 10)),
             ("4", "Anna Müller", "anna.mueller@example.com", "DE", date(2022, 4, 5)),
-            ("5", "Li Wei", "li.wei@example.com", "CN", date(2022, 5, 12))
+            ("5", "Li Wei", "li.wei@example.com", "DE", date(2022, 5, 12))
         ]
         customer_source_df = spark.createDataFrame(customer_source_data, schema=customer_source_schema)
         # ---------------------------------------------------------------------------------------
@@ -117,9 +117,9 @@ def main():
             customer_source_data = [
                 ("1", "0923623623","John Doe", "john.doe@changed.com", "CH", date(2022, 1, 15)),
                 ("2", "0923623624","Jane changed", "jane.smith@example.com", "EN", date(2022, 2, 20)),
-                ("3", "0923623625","Pedro Alvarez", "pedro.alvarez@example.com", "CH", date(2022, 3, 10)),
+                ("3", "0923623625","Pedro Alvarez", "pedro.alvarez@example.com", "EN", date(2022, 3, 10)),
                 ("4", "0923623626","Anna Müller", "anna.mueller@example.com", "DE", date(2022, 4, 5)),
-                ("5", "0923623627","Li Wei", "li.wei@example.com", "CN", date(2022, 5, 12))
+                ("5", "0923623627","Li Wei", "li.wei@example.com", "DE", date(2022, 5, 12))
             ]
             customer_source_df = spark.createDataFrame(customer_source_data, schema=customer_source_schema)
         else:
@@ -159,7 +159,7 @@ def main():
     # Gold Customer Agg Table
     gold_customer_agg = SuperDeltaTable(
         table_name="03_gold.customer_agg",
-        table_path="/Users/loicmagnien/Documents/GitHub/superlake/data/external-table/03_gold/customer_agg",
+        table_path="./data/external-table/03_gold/customer_agg",
         table_schema=T.StructType([
             T.StructField("country", T.StringType(), True),
             T.StructField("customer_count", T.LongType(), True),

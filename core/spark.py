@@ -1,5 +1,6 @@
 """Spark session management for SuperLake."""
  
+import sys
 from pyspark.sql import SparkSession
 
 def SuperSpark() -> SparkSession:
@@ -11,7 +12,9 @@ def SuperSpark() -> SparkSession:
         .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.3.0")
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .config("spark.sql.warehouse.dir", "/Users/loicmagnien/Documents/GitHub/superlake/data/spark-warehouse")
+        .config("spark.sql.warehouse.dir", "./data/spark-warehouse")
+        .config("spark.pyspark.python", sys.executable)
+        .config("spark.pyspark.driver.python", sys.executable)
         .getOrCreate()
     )
     # manage verbosity 
