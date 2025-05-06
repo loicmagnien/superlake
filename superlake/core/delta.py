@@ -13,7 +13,7 @@ import time
 import pyspark.sql.functions as F
 
 # custom imports
-from monitoring import SuperLogger
+from superlake.monitoring import SuperLogger
 
 
 # table save mode options
