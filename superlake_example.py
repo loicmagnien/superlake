@@ -10,15 +10,15 @@ import sys
 import time
 
 # the superlake library
-from core import *
-from monitoring import *
+from superlake.core import *
+from superlake.monitoring import *
 
 
 def main():
     """Run example pipeline."""
 
     # Initialize Spark
-    spark = SuperSpark()
+    spark = SuperSpark(warehouse_dir="./data/spark-warehouse")
     logger = SuperLogger()
     superlake_dt = datetime.now()
     
@@ -116,9 +116,9 @@ def main():
             ])
             customer_source_data = [
                 ("1", "0923623623","John Doe", "john.doe@changed.com", "CH", date(2022, 1, 15)),
-                ("2", "0923623624","Jane changed", "jane.smith@example.com", "EN", date(2022, 2, 20)),
-                ("3", "0923623625","Pedro Alvarez", "pedro.alvarez@example.com", "EN", date(2022, 3, 10)),
-                ("4", "0923623626","Anna Müller", "anna.mueller@example.com", "DE", date(2022, 4, 5)),
+                ("2", "0923623624","Jane changed", "jane.smith@example.com", "CH", date(2022, 2, 20)),
+                ("3", "0923623625","Pedro Alvarez", "pedro.alvarez@example.com", "CH", date(2022, 3, 10)),
+                ("4", "0923623626","Anna Müller", "anna.mueller@example.com", "CH", date(2022, 4, 5)),
                 ("5", "0923623627","Li Wei", "li.wei@example.com", "DE", date(2022, 5, 12))
             ]
             customer_source_df = spark.createDataFrame(customer_source_data, schema=customer_source_schema)

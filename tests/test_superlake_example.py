@@ -172,4 +172,98 @@ def test_cast_columns(spark):
     # check the schema has been casted correctly
     assert casted_df.schema == target_schema
 
+def test_drop_columns_basic(spark):
+    data = [(1, 'Alice', 10.0), (2, 'Bob', 20.0)]
+    columns = ['id', 'name', 'score']
+    df = spark.createDataFrame(data, columns)
+    sdf = SuperDataframe(df)
+    dropped_df = sdf.drop_columns(['score'])
+    # check the count of rows is the same
+    assert dropped_df.count() == 2
+    # check the columns are the same
+    assert dropped_df.columns == ['id', 'name']
+
+
+def test_drop_columns_multiple(spark):
+    data = [(1, 'Alice', 10.0, 'A'), (2, 'Bob', 20.0, 'B')]
+    columns = ['id', 'name', 'score', 'grade']
+    df = spark.createDataFrame(data, columns)
+    sdf = SuperDataframe(df)
+    dropped_df = sdf.drop_columns(['score', 'grade'])
+    # check the count of rows is the same
+    assert dropped_df.count() == 2
+    # check the columns are the same
+    assert dropped_df.columns == ['id', 'name']
+
+
+def test_drop_columns_non_existent(spark):
+    data = [(1, 'Alice'), (2, 'Bob')]
+    columns = ['id', 'name']
+    df = spark.createDataFrame(data, columns)
+    sdf = SuperDataframe(df)
+    # Spark ignores non-existent columns in drop
+    dropped_df = sdf.drop_columns(['age'])
+    # check the count of rows is the same
+    assert dropped_df.count() == 2
+    # check the columns are the same
+    assert dropped_df.columns == ['id', 'name']
+
+
+def test_drop_columns_all(spark):
+    data = [(1, 'Alice')]
+    columns = ['id', 'name']
+    df = spark.createDataFrame(data, columns)
+    sdf = SuperDataframe(df)
+    dropped_df = sdf.drop_columns(['id', 'name'])
+    # check the count of rows is the same
+    assert dropped_df.count() == 1
+    # check the columns are the same
+    assert dropped_df.columns == []
+
+
+def test_drop_columns_none(spark):
+    data = [(1, 'Alice')]
+    columns = ['id', 'name']
+    df = spark.createDataFrame(data, columns)
+    sdf = SuperDataframe(df)
+    dropped_df = sdf.drop_columns([])
+    # check the count of rows is the same
+    assert dropped_df.count() == 1
+    # check the columns are the same
+    assert dropped_df.columns == ['id', 'name']
+
+
+def test_drop_columns_empty_dataframe(spark):
+    columns = ['id', 'name']
+    df = spark.createDataFrame([], schema=T.StructType([
+        T.StructField('id', T.IntegerType(), True),
+        T.StructField('name', T.StringType(), True)
+    ]))
+    sdf = SuperDataframe(df)
+    dropped_df = sdf.drop_columns(['name'])
+    # check the count of rows is the same
+    assert dropped_df.count() == 0
+    # check the columns are the same
+    assert dropped_df.columns == ['id']
+
+
+def test_drop_columns_special_characters(spark):
+    data = [(1, 'Alice', 10.0)]
+    columns = ['id', 'name', 'score#1']
+    df = spark.createDataFrame(data, columns)
+    sdf = SuperDataframe(df)
+    dropped_df = sdf.drop_columns(['score#1'])
+    # check the count of rows is the same
+    assert dropped_df.count() == 1
+    # check the columns are the same
+    assert dropped_df.columns == ['id', 'name']
+
+def test_rename_columns(spark):
+    data = [(1, 'Alice', 10.0)]
+    columns = ['id', 'name', 'score#1']
+    df = spark.createDataFrame(data, columns)
+    sdf = SuperDataframe(df)
+    renamed_df = sdf.rename_columns({'name': 'full_name'})
+    assert renamed_df.columns == ['id', 'full_name', 'score#1']
+
 # More tests to come...

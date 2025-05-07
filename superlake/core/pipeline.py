@@ -78,9 +78,9 @@ class SuperPipeline:
         self.logger.info(f"Saved to silver. Duration: {t5-t4:.2f}s")
         if self.environment == "test": 
             print("\nBronze table output:")
-            self.bronze_table.read(self.spark).show()
+            self.bronze_table.read(self.spark).orderBy("superlake_dt", ascending=False).show()
             print("\nSilver table output:")
-            self.silver_table.read(self.spark).show()
+            self.silver_table.read(self.spark).orderBy(*self.silver_table.primary_keys).show()
 
         # 6. Log metrics
         total_duration = t5 - start_time
