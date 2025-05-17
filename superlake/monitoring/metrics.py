@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any
 from pyspark.sql import DataFrame, SparkSession
 import pyspark.sql.functions as F
 
+
 @dataclass
 class MetricDefinition:
     """Definition of a metric to collect."""
@@ -14,6 +15,7 @@ class MetricDefinition:
     unit: str
     aggregation: str = "count"
     filters: Optional[Dict[str, Any]] = None
+
 
 class MetricsCollector:
     """Collector for pipeline and data metrics."""

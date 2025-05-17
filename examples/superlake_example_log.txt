@@ -1,0 +1,297 @@
+################################################################################################
+------------------------ drop tables -----------------------                    
+2025-05-15 16:56:41,957 - SuperLake - INFO - Dropped Delta Table spark_catalog.01_bronze.customer (managed) and removed files
+2025-05-15 16:56:41,987 - SuperLake - INFO - Dropped Delta Table spark_catalog.02_silver.customer (external) and removed files
+2025-05-15 16:56:42,018 - SuperLake - INFO - Dropped Delta Table spark_catalog.03_gold.customer_agg (managed) and removed files
+------------------------ pipeline 1 ------------------------
+2025-05-15 16:56:42,018 - SuperLake - INFO - Starting SuperPipeline customer_pipeline_silver execution.
+2025-05-15 16:57:00,469 - SuperLake - INFO - Trace retrieved. bronze_u: False, silver_u: False, silver_d: False, skipped: False, del_function_defined: True, force_cdc: False
+2025-05-15 16:57:00,821 - SuperLake - INFO - CDC max customer id: 0
+2025-05-15 16:57:02,272 - SuperLake - INFO - Caching - CDC dataframe cached (3 rows).
+2025-05-15 16:57:02,492 - SuperLake - INFO - New data from CDC.
+Table save mode: append
++-----------+-------------+--------------------+-------+-----------+--------------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|
++-----------+-------------+--------------------+-------+-----------+--------------------+
+|          1|     John Doe|john.doe@example.com|     US| 2022-01-15|2025-05-15 16:56:...|
+|          2|   Jane Smith|jane.smith@exampl...|     FR| 2022-02-20|2025-05-15 16:56:...|
+|          3|Pedro Alvarez|pedro.alvarez@exa...|     EN| 2022-03-10|2025-05-15 16:56:...|
++-----------+-------------+--------------------+-------+-----------+--------------------+
+
+None
+2025-05-15 16:57:02,946 - SuperLake - INFO - Table spark_catalog.01_bronze.customer does not exist, creating it
+2025-05-15 16:57:03,369 - SuperLake - INFO - Created schema 01_bronze in catalog
+2025-05-15 16:57:07,048 - SuperLake - INFO - Created Managed Delta table spark_catalog.01_bronze.customer
+2025-05-15 16:57:07,152 - SuperLake - INFO - Registered managed Delta table spark_catalog.01_bronze.customer
+2025-05-15 16:57:12,091 - SuperLake - INFO - Saved data to spark_catalog.01_bronze.customer (append)
+2025-05-15 16:57:12,308 - SuperLake - INFO - Metric - spark_catalog.01_bronze.customer.save_row_count: 3
+2025-05-15 16:57:12,308 - SuperLake - INFO - Metric - spark_catalog.01_bronze.customer.save_duration_sec: 9.36
+Table save mode: merge_scd                                                      
++-----------+-------------+--------------------+-------+-----------+--------------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|
++-----------+-------------+--------------------+-------+-----------+--------------------+
+|          3|pedro alvarez|pedro.alvarez@exa...|     EN| 2022-03-10|2025-05-15 16:56:...|
+|          2|   jane smith|jane.smith@exampl...|     FR| 2022-02-20|2025-05-15 16:56:...|
+|          1|     john doe|john.doe@example.com|     US| 2022-01-15|2025-05-15 16:56:...|
++-----------+-------------+--------------------+-------+-----------+--------------------+
+
+None
+2025-05-15 16:57:24,996 - SuperLake - INFO - Table spark_catalog.02_silver.customer does not exist, creating it
+2025-05-15 16:57:24,996 - SuperLake - INFO - SCD columns ['scd_start_dt', 'scd_end_dt', 'scd_is_current'] are missing from table_schema but will be considered present for MergeSCD mode.
+2025-05-15 16:57:25,346 - SuperLake - INFO - Created schema 02_silver in catalog
+2025-05-15 16:57:26,231 - SuperLake - INFO - Created External Delta table spark_catalog.02_silver.customer with generated columns
+2025-05-15 16:57:26,255 - SuperLake - INFO - Registered external Delta table spark_catalog.02_silver.customer
+2025-05-15 16:57:36,760 - SuperLake - INFO - Saved data to spark_catalog.02_silver.customer (merge_scd)
+2025-05-15 16:57:37,180 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.save_row_count: 3
+2025-05-15 16:57:37,180 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.save_duration_sec: 12.2
+2025-05-15 16:57:43,897 - SuperLake - INFO - Starting deletion of rows no longer present at the source.
+2025-05-15 16:57:45,321 - SuperLake - INFO - Caching - Deletions dataframe cached (0 rows).
+2025-05-15 16:57:45,516 - SuperLake - INFO - Skipped deletion for spark_catalog.02_silver.customer.
+2025-05-15 16:57:45,516 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.delete_rows_deleted: 0
+2025-05-15 16:57:45,528 - SuperLake - INFO - Caching - Deletions dataframe unpersisted.
+2025-05-15 16:57:51,937 - SuperLake - INFO - Metric - total_duration_sec: 69.92 
+2025-05-15 16:57:51,938 - SuperLake - INFO - SuperPipeline customer_pipeline_silver completed. Total duration: 69.92s
+
+spark_catalog.01_bronze.customer:
++-----------+-------------+--------------------+-------+-----------+--------------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|
++-----------+-------------+--------------------+-------+-----------+--------------------+
+|          3|Pedro Alvarez|pedro.alvarez@exa...|     EN| 2022-03-10|2025-05-15 16:56:...|
+|          2|   Jane Smith|jane.smith@exampl...|     FR| 2022-02-20|2025-05-15 16:56:...|
+|          1|     John Doe|john.doe@example.com|     US| 2022-01-15|2025-05-15 16:56:...|
++-----------+-------------+--------------------+-------+-----------+--------------------+
+
+
+spark_catalog.02_silver.customer:
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+----------+--------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|        scd_start_dt|scd_end_dt|scd_is_current|
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+----------+--------------+
+|          1|     john doe|john.doe@example.com|     US| 2022-01-15|2025-05-15 16:56:...|2025-05-15 16:56:...|      NULL|          true|
+|          3|pedro alvarez|pedro.alvarez@exa...|     EN| 2022-03-10|2025-05-15 16:56:...|2025-05-15 16:56:...|      NULL|          true|
+|          2|   jane smith|jane.smith@exampl...|     FR| 2022-02-20|2025-05-15 16:56:...|2025-05-15 16:56:...|      NULL|          true|
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+----------+--------------+
+
+2025-05-15 16:57:52,814 - SuperLake - INFO - Caching - CDC dataframe unpersisted.
+2025-05-15 16:57:52,814 - SuperLake - INFO - Starting SuperGoldPipeline customer_pipeline_gold execution.
+2025-05-15 16:57:52,886 - SuperLake - INFO - Table spark_catalog.03_gold.customer_agg does not exist, creating it
+2025-05-15 16:57:53,220 - SuperLake - INFO - Created schema 03_gold in catalog
+2025-05-15 16:57:54,604 - SuperLake - INFO - Created Managed Delta table spark_catalog.03_gold.customer_agg
+2025-05-15 16:57:54,627 - SuperLake - INFO - Registered managed Delta table spark_catalog.03_gold.customer_agg
+2025-05-15 16:58:01,877 - SuperLake - INFO - Saved data to spark_catalog.03_gold.customer_agg (overwrite)
+2025-05-15 16:58:02,769 - SuperLake - INFO - Metric - spark_catalog.03_gold.customer_agg.save_row_count: 3
+2025-05-15 16:58:02,769 - SuperLake - INFO - Metric - spark_catalog.03_gold.customer_agg.save_duration_sec: 9.88
+2025-05-15 16:58:12,006 - SuperLake - INFO - SuperGoldPipeline customer_pipeline_gold completed. Total duration: 19.19s
+
+Gold table spark_catalog.03_gold.customer_agg:
++-------+--------------+--------------------+
+|country|customer_count|        superlake_dt|
++-------+--------------+--------------------+
+|     EN|             1|2025-05-15 16:56:...|
+|     US|             1|2025-05-15 16:56:...|
+|     FR|             1|2025-05-15 16:56:...|
++-------+--------------+--------------------+
+
+-------------------- waiting 5 seconds --------------------
+------------------------ pipeline 2 ------------------------
+2025-05-15 16:58:18,961 - SuperLake - INFO - Starting SuperPipeline customer_pipeline_silver execution.
+2025-05-15 16:58:21,771 - SuperLake - INFO - Trace retrieved. bronze_u: False, silver_u: False, silver_d: False, skipped: False, del_function_defined: True, force_cdc: False
+2025-05-15 16:58:22,621 - SuperLake - INFO - CDC max customer id: 0
+2025-05-15 16:58:22,923 - SuperLake - INFO - Caching - CDC dataframe cached (4 rows).
+2025-05-15 16:58:23,085 - SuperLake - INFO - New data from CDC.
+Table save mode: append
++-----------+------------+-------------+--------------------+-------+-----------+--------------------+
+|customer_id|phone_number|         name|               email|country|signup_date|        superlake_dt|
++-----------+------------+-------------+--------------------+-------+-----------+--------------------+
+|          2|  0923623624| Jane changed|jane.smith@exampl...|     CH| 2022-02-20|2025-05-15 16:58:...|
+|          3|  0923623625|Pedro Alvarez|pedro.alvarez@exa...|     CH| 2022-03-10|2025-05-15 16:58:...|
+|          4|  0923623626|  Anna Müller|anna.mueller@exam...|     CH| 2022-04-05|2025-05-15 16:58:...|
+|          5|  0923623627|       Li Wei|  li.wei@example.com|     DE| 2022-05-12|2025-05-15 16:58:...|
++-----------+------------+-------------+--------------------+-------+-----------+--------------------+
+
+None
+2025-05-15 16:58:23,317 - SuperLake - INFO - Retaining extra columns (schema_evolution_option=Merge): ['phone_number']
+2025-05-15 16:58:23,328 - SuperLake - INFO - Retaining extra columns (schema_evolution_option=Merge): ['phone_number']
+2025-05-15 16:58:24,530 - SuperLake - INFO - Saved data to spark_catalog.01_bronze.customer (append)
+2025-05-15 16:58:24,821 - SuperLake - INFO - Metric - spark_catalog.01_bronze.customer.save_row_count: 4
+2025-05-15 16:58:24,821 - SuperLake - INFO - Metric - spark_catalog.01_bronze.customer.save_duration_sec: 1.55
+Table save mode: merge_scd                                                      
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|phone_number|
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+|          3|pedro alvarez|pedro.alvarez@exa...|     CH| 2022-03-10|2025-05-15 16:58:...|  0923623625|
+|          4|  anna müller|anna.mueller@exam...|     CH| 2022-04-05|2025-05-15 16:58:...|  0923623626|
+|          2| jane changed|jane.smith@exampl...|     CH| 2022-02-20|2025-05-15 16:58:...|  0923623624|
+|          5|       li wei|  li.wei@example.com|     DE| 2022-05-12|2025-05-15 16:58:...|  0923623627|
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+
+None
+2025-05-15 16:58:34,254 - SuperLake - INFO - Retaining extra columns (schema_evolution_option=Merge): ['phone_number']
+2025-05-15 16:58:45,783 - SuperLake - INFO - Saved data to spark_catalog.02_silver.customer (merge_scd)
+2025-05-15 16:58:46,335 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.save_row_count: 4
+2025-05-15 16:58:46,335 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.save_duration_sec: 12.2
+2025-05-15 16:58:54,177 - SuperLake - INFO - Starting deletion of rows no longer present at the source.
+2025-05-15 16:58:56,895 - SuperLake - INFO - Caching - Deletions dataframe cached (1 rows).
+2025-05-15 16:58:58,349 - SuperLake - INFO - 1 SCD rows expected to be closed in spark_catalog.02_silver.customer.
+2025-05-15 16:59:05,339 - SuperLake - INFO - 1 rows deleted from spark_catalog.02_silver.customer.
+2025-05-15 16:59:05,339 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.delete_rows_deleted: 1
+2025-05-15 16:59:05,342 - SuperLake - INFO - Caching - Deletions dataframe unpersisted.
+2025-05-15 16:59:11,626 - SuperLake - INFO - Metric - total_duration_sec: 52.66
+2025-05-15 16:59:11,626 - SuperLake - INFO - SuperPipeline customer_pipeline_silver completed. Total duration: 52.67s
+
+spark_catalog.01_bronze.customer:
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|phone_number|
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+|          3|Pedro Alvarez|pedro.alvarez@exa...|     CH| 2022-03-10|2025-05-15 16:58:...|  0923623625|
+|          4|  Anna Müller|anna.mueller@exam...|     CH| 2022-04-05|2025-05-15 16:58:...|  0923623626|
+|          2| Jane changed|jane.smith@exampl...|     CH| 2022-02-20|2025-05-15 16:58:...|  0923623624|
+|          5|       Li Wei|  li.wei@example.com|     DE| 2022-05-12|2025-05-15 16:58:...|  0923623627|
+|          3|Pedro Alvarez|pedro.alvarez@exa...|     EN| 2022-03-10|2025-05-15 16:56:...|        NULL|
+|          2|   Jane Smith|jane.smith@exampl...|     FR| 2022-02-20|2025-05-15 16:56:...|        NULL|
+|          1|     John Doe|john.doe@example.com|     US| 2022-01-15|2025-05-15 16:56:...|        NULL|
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+
+
+spark_catalog.02_silver.customer:
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+--------------------+--------------+------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|        scd_start_dt|          scd_end_dt|scd_is_current|phone_number|
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+--------------------+--------------+------------+
+|          3|pedro alvarez|pedro.alvarez@exa...|     CH| 2022-03-10|2025-05-15 16:58:...|2025-05-15 16:58:...|                NULL|          true|  0923623625|
+|          4|  anna müller|anna.mueller@exam...|     CH| 2022-04-05|2025-05-15 16:58:...|2025-05-15 16:58:...|                NULL|          true|  0923623626|
+|          2| jane changed|jane.smith@exampl...|     CH| 2022-02-20|2025-05-15 16:58:...|2025-05-15 16:58:...|                NULL|          true|  0923623624|
+|          5|       li wei|  li.wei@example.com|     DE| 2022-05-12|2025-05-15 16:58:...|2025-05-15 16:58:...|                NULL|          true|  0923623627|
+|          3|pedro alvarez|pedro.alvarez@exa...|     EN| 2022-03-10|2025-05-15 16:56:...|2025-05-15 16:56:...|2025-05-15 16:58:...|         false|        NULL|
+|          2|   jane smith|jane.smith@exampl...|     FR| 2022-02-20|2025-05-15 16:56:...|2025-05-15 16:56:...|2025-05-15 16:58:...|         false|        NULL|
+|          1|     john doe|john.doe@example.com|     US| 2022-01-15|2025-05-15 16:56:...|2025-05-15 16:56:...|2025-05-15 16:58:...|         false|        NULL|
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+--------------------+--------------+------------+
+
+2025-05-15 16:59:12,877 - SuperLake - INFO - Caching - CDC dataframe unpersisted.
+2025-05-15 16:59:12,877 - SuperLake - INFO - Starting SuperGoldPipeline customer_pipeline_gold execution.
+2025-05-15 16:59:15,044 - SuperLake - INFO - Saved data to spark_catalog.03_gold.customer_agg (overwrite)
+2025-05-15 16:59:15,714 - SuperLake - INFO - Metric - spark_catalog.03_gold.customer_agg.save_row_count: 2
+2025-05-15 16:59:15,714 - SuperLake - INFO - Metric - spark_catalog.03_gold.customer_agg.save_duration_sec: 2.8
+2025-05-15 16:59:21,408 - SuperLake - INFO - SuperGoldPipeline customer_pipeline_gold completed. Total duration: 8.53s
+
+Gold table spark_catalog.03_gold.customer_agg:
++-------+--------------+--------------------+
+|country|customer_count|        superlake_dt|
++-------+--------------+--------------------+
+|     DE|             1|2025-05-15 16:58:...|
+|     CH|             3|2025-05-15 16:58:...|
++-------+--------------+--------------------+
+
+-------------------- waiting 5 seconds --------------------
+------------------------ pipeline 3 ------------------------
+2025-05-15 16:59:27,630 - SuperLake - INFO - Starting SuperPipeline customer_pipeline_silver execution.
+2025-05-15 16:59:29,361 - SuperLake - INFO - Trace retrieved. bronze_u: True, silver_u: True, silver_d: True, skipped: False, del_function_defined: True, force_cdc: True
+2025-05-15 16:59:30,477 - SuperLake - INFO - CDC max customer id: 4
+2025-05-15 16:59:30,881 - SuperLake - INFO - Caching - CDC dataframe cached (1 rows).
+2025-05-15 16:59:31,036 - SuperLake - INFO - force_cdc: New data from CDC.
+Table save mode: merge
++-----------+------------+------+------------------+-------+-----------+--------------------+
+|customer_id|phone_number|  name|             email|country|signup_date|        superlake_dt|
++-----------+------------+------+------------------+-------+-----------+--------------------+
+|          5|  0923623627|Li Wei|li.wei@example.com|     DE| 2022-05-12|2025-05-15 16:58:...|
++-----------+------------+------+------------------+-------+-----------+--------------------+
+
+None
+2025-05-15 16:59:35,348 - SuperLake - INFO - Saved data to spark_catalog.01_bronze.customer (merge)
+2025-05-15 16:59:35,464 - SuperLake - INFO - Metric - spark_catalog.01_bronze.customer.save_row_count: 1
+2025-05-15 16:59:35,464 - SuperLake - INFO - Metric - spark_catalog.01_bronze.customer.save_duration_sec: 4.31
+Table save mode: merge_scd                                                      
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|phone_number|
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+|          3|pedro alvarez|pedro.alvarez@exa...|     CH| 2022-03-10|2025-05-15 16:58:...|  0923623625|
+|          4|  anna müller|anna.mueller@exam...|     CH| 2022-04-05|2025-05-15 16:58:...|  0923623626|
+|          2| jane changed|jane.smith@exampl...|     CH| 2022-02-20|2025-05-15 16:58:...|  0923623624|
+|          5|       li wei|  li.wei@example.com|     DE| 2022-05-12|2025-05-15 16:58:...|  0923623627|
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+
+None
+2025-05-15 16:59:47,410 - SuperLake - INFO - Saved data to spark_catalog.02_silver.customer (merge_scd)
+2025-05-15 16:59:47,718 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.save_row_count: 4
+2025-05-15 16:59:47,718 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.save_duration_sec: 3.09
+2025-05-15 16:59:56,808 - SuperLake - INFO - Starting deletion of rows no longer present at the source.
+2025-05-15 16:59:58,334 - SuperLake - INFO - Caching - Deletions dataframe cached (3 rows).
+2025-05-15 16:59:59,266 - SuperLake - INFO - 3 SCD rows expected to be closed in spark_catalog.02_silver.customer.
+2025-05-15 17:00:04,827 - SuperLake - INFO - 1 rows deleted from spark_catalog.02_silver.customer.
+2025-05-15 17:00:04,827 - SuperLake - INFO - Metric - spark_catalog.02_silver.customer.delete_rows_deleted: 1
+2025-05-15 17:00:04,831 - SuperLake - INFO - Caching - Deletions dataframe unpersisted.
+2025-05-15 17:00:10,351 - SuperLake - INFO - Metric - total_duration_sec: 42.72
+2025-05-15 17:00:10,351 - SuperLake - INFO - SuperPipeline customer_pipeline_silver completed. Total duration: 42.72s
+
+spark_catalog.01_bronze.customer:
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|phone_number|
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+|          3|Pedro Alvarez|pedro.alvarez@exa...|     CH| 2022-03-10|2025-05-15 16:58:...|  0923623625|
+|          4|  Anna Müller|anna.mueller@exam...|     CH| 2022-04-05|2025-05-15 16:58:...|  0923623626|
+|          2| Jane changed|jane.smith@exampl...|     CH| 2022-02-20|2025-05-15 16:58:...|  0923623624|
+|          5|       Li Wei|  li.wei@example.com|     DE| 2022-05-12|2025-05-15 16:58:...|  0923623627|
+|          3|Pedro Alvarez|pedro.alvarez@exa...|     EN| 2022-03-10|2025-05-15 16:56:...|        NULL|
+|          2|   Jane Smith|jane.smith@exampl...|     FR| 2022-02-20|2025-05-15 16:56:...|        NULL|
+|          1|     John Doe|john.doe@example.com|     US| 2022-01-15|2025-05-15 16:56:...|        NULL|
++-----------+-------------+--------------------+-------+-----------+--------------------+------------+
+
+
+spark_catalog.02_silver.customer:
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+--------------------+--------------+------------+
+|customer_id|         name|               email|country|signup_date|        superlake_dt|        scd_start_dt|          scd_end_dt|scd_is_current|phone_number|
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+--------------------+--------------+------------+
+|          2| jane changed|jane.smith@exampl...|     CH| 2022-02-20|2025-05-15 16:58:...|2025-05-15 16:58:...|2025-05-15 16:58:...|         false|  0923623624|
+|          3|pedro alvarez|pedro.alvarez@exa...|     CH| 2022-03-10|2025-05-15 16:58:...|2025-05-15 16:58:...|                NULL|          true|  0923623625|
+|          4|  anna müller|anna.mueller@exam...|     CH| 2022-04-05|2025-05-15 16:58:...|2025-05-15 16:58:...|                NULL|          true|  0923623626|
+|          5|       li wei|  li.wei@example.com|     DE| 2022-05-12|2025-05-15 16:58:...|2025-05-15 16:58:...|                NULL|          true|  0923623627|
+|          3|pedro alvarez|pedro.alvarez@exa...|     EN| 2022-03-10|2025-05-15 16:56:...|2025-05-15 16:56:...|2025-05-15 16:58:...|         false|        NULL|
+|          2|   jane smith|jane.smith@exampl...|     FR| 2022-02-20|2025-05-15 16:56:...|2025-05-15 16:56:...|2025-05-15 16:58:...|         false|        NULL|
+|          1|     john doe|john.doe@example.com|     US| 2022-01-15|2025-05-15 16:56:...|2025-05-15 16:56:...|2025-05-15 16:58:...|         false|        NULL|
++-----------+-------------+--------------------+-------+-----------+--------------------+--------------------+--------------------+--------------+------------+
+
+2025-05-15 17:00:11,614 - SuperLake - INFO - Caching - CDC dataframe unpersisted.
+2025-05-15 17:00:11,614 - SuperLake - INFO - Starting SuperGoldPipeline customer_pipeline_gold execution.
+2025-05-15 17:00:13,768 - SuperLake - INFO - Saved data to spark_catalog.03_gold.customer_agg (overwrite)
+2025-05-15 17:00:14,394 - SuperLake - INFO - Metric - spark_catalog.03_gold.customer_agg.save_row_count: 2
+2025-05-15 17:00:14,394 - SuperLake - INFO - Metric - spark_catalog.03_gold.customer_agg.save_duration_sec: 2.75
+2025-05-15 17:00:19,997 - SuperLake - INFO - SuperGoldPipeline customer_pipeline_gold completed. Total duration: 8.38s
+
+Gold table spark_catalog.03_gold.customer_agg:
++-------+--------------+--------------------+
+|country|customer_count|        superlake_dt|
++-------+--------------+--------------------+
+|     DE|             1|2025-05-15 16:58:...|
+|     CH|             2|2025-05-15 16:58:...|
++-------+--------------+--------------------+
+
+------------------------ optimize tables ------------------------
+2025-05-15 17:00:21,031 - SuperLake - INFO - Starting optimize for table spark_catalog.01_bronze.customer.
+2025-05-15 17:00:21,032 - SuperLake - INFO - optimize_table is False, skipping optimize
+2025-05-15 17:00:21,032 - SuperLake - INFO - Starting optimize for table spark_catalog.02_silver.customer.
+2025-05-15 17:00:24,627 - SuperLake - INFO - Optimized table spark_catalog.02_silver.customer (external)
+2025-05-15 17:00:24,627 - SuperLake - INFO - Metric - optimize_table_creation_duration_sec: 0.03
+2025-05-15 17:00:24,628 - SuperLake - INFO - Metric - optimize_table_optimization_duration_sec: 3.56
+2025-05-15 17:00:24,628 - SuperLake - INFO - Metric - optimize_table_total_duration_sec: 3.59
+2025-05-15 17:00:24,628 - SuperLake - INFO - Starting optimize for table spark_catalog.03_gold.customer_agg.
+2025-05-15 17:00:27,195 - SuperLake - INFO - Optimized table spark_catalog.03_gold.customer_agg (managed)
+2025-05-15 17:00:27,196 - SuperLake - INFO - Metric - optimize_table_creation_duration_sec: 0.06
+2025-05-15 17:00:27,196 - SuperLake - INFO - Metric - optimize_table_optimization_duration_sec: 2.5
+2025-05-15 17:00:27,196 - SuperLake - INFO - Metric - optimize_table_total_duration_sec: 2.57
+------------------------ vacuum tables ------------------------
+2025-05-15 17:00:27,260 - SuperLake - INFO - Registered managed Delta table spark_catalog.01_bronze.customer
+Deleted 0 files and directories in a total of 3 directories.                    
+2025-05-15 17:00:51,648 - SuperLake - INFO - Vacuumed table spark_catalog.01_bronze.customer with retention 168 hours
+2025-05-15 17:00:51,648 - SuperLake - INFO - Metric - vacuum_table_creation_duration_sec: 0.06
+2025-05-15 17:00:51,648 - SuperLake - INFO - Metric - vacuum_table_vacuum_duration_sec: 24.39
+2025-05-15 17:00:51,648 - SuperLake - INFO - Metric - vacuum_table_total_duration_sec: 24.45
+2025-05-15 17:00:51,681 - SuperLake - INFO - Registered external Delta table spark_catalog.02_silver.customer
+Deleted 0 files and directories in a total of 3 directories.                    
+2025-05-15 17:01:13,545 - SuperLake - INFO - Vacuumed table spark_catalog.02_silver.customer with retention 168 hours
+2025-05-15 17:01:13,545 - SuperLake - INFO - Metric - vacuum_table_creation_duration_sec: 0.03
+2025-05-15 17:01:13,545 - SuperLake - INFO - Metric - vacuum_table_vacuum_duration_sec: 21.86
+2025-05-15 17:01:13,545 - SuperLake - INFO - Metric - vacuum_table_total_duration_sec: 21.9
+2025-05-15 17:01:13,585 - SuperLake - INFO - Registered managed Delta table spark_catalog.03_gold.customer_agg
+Deleted 0 files and directories in a total of 1 directories.                    
+2025-05-15 17:01:32,452 - SuperLake - INFO - Vacuumed table spark_catalog.03_gold.customer_agg with retention 168 hours
+2025-05-15 17:01:32,452 - SuperLake - INFO - Metric - vacuum_table_creation_duration_sec: 0.04
+2025-05-15 17:01:32,452 - SuperLake - INFO - Metric - vacuum_table_vacuum_duration_sec: 18.87
+2025-05-15 17:01:32,452 - SuperLake - INFO - Metric - vacuum_table_total_duration_sec: 18.91

@@ -1,23 +1,34 @@
+import re
+from typing import List, Dict, Any
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T
 from pyspark.sql import functions as F
-import re
-from typing import List, Dict, Any
+
 
 class SuperDataframe:
-    def __init__(self, df: DataFrame):
+    def __init__(self, df: DataFrame) -> None:
         self.df = df
     
-    
     def clean_columns_names(self) -> DataFrame:
-        """Cleans DataFrame column names by replacing invalid characters."""
+        """
+        Cleans DataFrame column names by replacing invalid characters.
+        Args:
+            None
+        Returns:
+            DataFrame with cleaned column names.
+        """
         new_cols = [re.sub(r'[^a-zA-Z0-9_]+', '_', c).strip('_') for c in self.df.columns]
         df_clean = self.df.toDF(*new_cols)
         return df_clean
     
-
     def clean_column_values(self, columns: List[str]) -> DataFrame:
-        """Cleans DataFrame partition values by replacing invalid characters."""
+        """
+        Cleans DataFrame partition values by replacing invalid characters.
+        Args:
+            columns: List of column names to clean.
+        Returns:
+            DataFrame with cleaned column values.
+        """
         df_clean = self.df
         for column in columns:
             df_clean = df_clean.withColumn(
@@ -29,51 +40,77 @@ class SuperDataframe:
             )
         return df_clean
     
-
     def cast_columns(self, schema: T.StructType) -> DataFrame:
-        """Cast the columns of a Spark DataFrame based on provided target schema."""
+        """
+        Cast the columns of a Spark DataFrame based on provided target schema.
+        Args:
+            schema: StructType of the target schema.
+        Returns:
+            DataFrame with casted columns.
+        """
         df_casted = self.df
         for field in schema.fields:
             if field.name in df_casted.columns:
-                df_casted = df_casted.withColumn(field.name, F.col(field.name).cast(field.dataType))
+                df_casted = (
+                    df_casted.withColumn(field.name, F.col(field.name).cast(field.dataType))
+                )
         return df_casted 
     
-
     def drop_columns(self, columns: List[str]) -> DataFrame:
-        """Drop the columns of a Spark DataFrame based on provided list of column names."""
+        """
+        Drop the columns of a Spark DataFrame based on provided list of column names.
+        Args:
+            columns: List of column names to drop.
+        Returns:
+            DataFrame with dropped columns.
+        """
         df_dropped = self.df.drop(*columns)
         return df_dropped
     
-    
     def rename_columns(self, columns: Dict[str, str]) -> DataFrame:
-        """Rename the columns of a Spark DataFrame based on provided dictionary of column names."""
-        df_renamed = self.df.toDF(*[columns.get(c, c) for c in self.df.columns])
+        """
+        Rename the columns of a Spark DataFrame based on provided dictionary of column names.
+        Args:
+            columns: Dictionary of column names to rename.
+        Returns:
+            DataFrame with renamed columns.
+        """
+        df_renamed = self.df.toDF(
+            *[columns.get(c, c) for c in self.df.columns]
+        )
         return df_renamed
     
-    
-    def replace_null_values(self, columns: List[str], value: any) -> DataFrame:
-        """Replace the null values of a Spark DataFrame based on provided list of column names and value."""
-        df_replaced = self.df.na.fill(value, subset=columns)
+    def replace_null_values(self, column_value_dict: Dict[str, Any]) -> DataFrame:
+        """
+        Replace the null values of a Spark DataFrame based on 
+        provided dictionary of column names and values.
+        Args:
+            column_value_dict: Dictionary of column names and values to replace null values.
+        Returns:
+            DataFrame with replaced null values.
+        """
+        df_replaced = self.df.na.fill(column_value_dict)
         return df_replaced
     
-    
     def drop_duplicates(self, columns: List[str]) -> DataFrame:
-        """Drop the duplicate rows of a Spark DataFrame based on provided list of column names."""
+        """
+        Drop the duplicate rows of a Spark DataFrame based on provided list of column names.
+        Args:
+            columns: List of column names to drop duplicates.
+        Returns:
+            DataFrame with dropped duplicates.
+        """
         df_dropped = self.df.dropDuplicates(subset=columns)
         return df_dropped
     
-
     def drop_null_values(self, columns: List[str]) -> DataFrame:
-        """Drop the rows of a Spark DataFrame based on provided list of column names where the values are null."""
+        """
+        Drop the rows of a Spark DataFrame based on provided list of 
+        column names where the values are null.
+        Args:
+            columns: List of column names to drop null values.
+        Returns:
+            DataFrame with dropped null values.
+        """
         df_dropped = self.df.na.drop(subset=columns)
-        return df_dropped   
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+        return df_dropped

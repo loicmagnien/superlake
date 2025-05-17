@@ -2,6 +2,7 @@ pyspark==3.5.3
 delta-spark==3.3.0
 applicationinsights
 pandas
+yaml
 pytz
 loguru
 mypy

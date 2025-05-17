@@ -1,6 +1,6 @@
 from .spark import SuperSpark
 from .delta import SuperDeltaTable, SchemaEvolution, TableSaveMode
-from .pipeline import SuperPipeline, SuperGoldPipeline
+from .pipeline import SuperPipeline, SuperGoldPipeline, SuperTracer
 from .dataframe import SuperDataframe
 
 __all__ = [
@@ -13,6 +13,7 @@ __all__ = [
     # pipeline
     "SuperPipeline",
     "SuperGoldPipeline",
+    "SuperTracer",
     # dataframe
-    "SuperDataframe"
+    "SuperDataframe",
 ]

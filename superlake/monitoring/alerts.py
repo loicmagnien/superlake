@@ -2,8 +2,9 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Optional, Callable
 from enum import Enum
+
 
 class AlertSeverity(Enum):
     """Alert severity levels."""
@@ -11,6 +12,7 @@ class AlertSeverity(Enum):
     WARNING = "warning"
     ERROR = "error"
     CRITICAL = "critical"
+
 
 @dataclass
 class AlertRule:
@@ -22,6 +24,7 @@ class AlertRule:
     message_template: str
     threshold: Optional[float] = None
 
+
 @dataclass
 class Alert:
     """Alert instance."""
@@ -30,9 +33,9 @@ class Alert:
     metrics: Dict[str, float]
     message: str
 
+
 class AlertManager:
     """Manager for monitoring alerts."""
-    
     def __init__(self,
                  rules: Optional[List[AlertRule]] = None,
                  handlers: Optional[Dict[str, Callable[[Alert], None]]] = None):
@@ -40,19 +43,19 @@ class AlertManager:
         self.rules = rules or []
         self.handlers = handlers or {}
         self.alerts = []
-        
+    
     def add_rule(self, rule: AlertRule) -> None:
         """Add alert rule."""
         self.rules.append(rule)
-        
-    def add_handler(self,
-                   name: str,
-                   handler: Callable[[Alert], None]) -> None:
+    
+    def add_handler(self, name: str, handler: Callable[[Alert], None]) -> None:
         """Add alert handler."""
         self.handlers[name] = handler
-        
-    def check_alerts(self,
-                    metrics: Dict[str, float]) -> List[Alert]:
+    
+    def check_alerts(
+            self,
+            metrics: Dict[str, float]
+            ) -> List[Alert]:
         """Check metrics against alert rules."""
         current_alerts = []
         
@@ -113,12 +116,13 @@ class AlertManager:
         # Implementation would depend on Teams API
         print(f"Would send Teams message for alert: {alert.message}")
         
-    def create_threshold_rule(self,
-                            name: str,
-                            metric_name: str,
-                            threshold: float,
-                            operator: str = ">",
-                            severity: AlertSeverity = AlertSeverity.WARNING) -> AlertRule:
+    def create_threshold_rule(
+            self,
+            name: str,
+            metric_name: str,
+            threshold: float,
+            operator: str = ">",
+            severity: AlertSeverity = AlertSeverity.WARNING) -> AlertRule:
         """Create simple threshold-based alert rule."""
         operators = {
             ">": lambda x, t: x > t,
@@ -144,4 +148,4 @@ class AlertManager:
             condition=condition,
             message_template=f"{metric_name} is {operator} {threshold}: {{" + metric_name + "}}",
             threshold=threshold
-        ) 
+        )

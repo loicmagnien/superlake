@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from applicationinsights import TelemetryClient
 
+
 class SuperLogger:
     """Logger for data pipeline operations."""
     
@@ -54,10 +55,11 @@ class SuperLogger:
         if self.telemetry:
             self.telemetry.track_trace(message, severity='ERROR')
             
-    def metric(self, 
-              name: str,
-              value: float,
-              properties: Optional[Dict[str, Any]] = None) -> None:
+    def metric(
+            self, 
+            name: str,
+            value: float,
+            properties: Optional[Dict[str, Any]] = None) -> None:
         """Log metric value."""
         self.metrics[name] = value
         self.logger.info(f"Metric - {name}: {value}")
