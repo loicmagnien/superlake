@@ -15,8 +15,16 @@ import time
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # the superlake library
-from superlake.core import *
-from superlake.monitoring import *
+from superlake.core import (
+    SuperSpark, 
+    SuperDeltaTable, 
+    SuperTracer, 
+    SuperPipeline, 
+    SuperGoldPipeline, 
+    TableSaveMode, 
+    SchemaEvolution
+)
+from superlake.monitoring import SuperLogger
 
 
 def main():
@@ -43,12 +51,12 @@ def main():
 
     # initialize SuperTracer and generate trace table
     super_tracer = SuperTracer(
-        super_spark = super_spark,
-        catalog_name = "spark_catalog",
-        schema_name = "00_superlake",
-        table_name = "super_trace",
-        managed = False,
-        logger = logger
+        super_spark=super_spark,
+        catalog_name="spark_catalog",
+        schema_name="00_superlake",
+        table_name="super_trace",
+        managed=False,
+        logger=logger
     )
     
     
@@ -252,7 +260,6 @@ def main():
     #                 Customer Data Pipeline from Source > Bronze > Silver > Gold
     # ------------------------------------------------------------------------------------------------
 
-    
     print("################################################################################################")
     super_tracer.generate_trace_table()
 
@@ -269,35 +276,34 @@ def main():
 
     # source > bronze > silver pipeline
     customer_pipeline = SuperPipeline(
-        logger = logger,
-        super_spark = super_spark,
-        super_tracer = super_tracer,
-        superlake_dt = superlake_dt,
-        pipeline_name = "customer_pipeline_silver",
-        bronze_table = bronze_customer,
-        silver_table = silver_customer,
-        cdc_function = customer_cdc,
-        tra_function = customer_tra,
-        del_function = customer_del,
-        force_cdc = False,
+        logger=logger,
+        super_spark=super_spark,
+        super_tracer=super_tracer,
+        superlake_dt=superlake_dt,
+        pipeline_name="customer_pipeline_silver",
+        bronze_table=bronze_customer,
+        silver_table=silver_customer,
+        cdc_function=customer_cdc,
+        tra_function=customer_tra,
+        del_function=customer_del,
+        force_cdc=False,
         force_caching=True,
-        environment = "test"
+        environment="test"
     )
     customer_pipeline.execute()
 
     # gold pipeline
     gold_pipeline = SuperGoldPipeline(
-        logger = logger,
-        super_spark = super_spark,
-        super_tracer = super_tracer,
-        superlake_dt = superlake_dt,
-        pipeline_name = "customer_pipeline_gold",
-        gold_function = gold_customer_agg_function,
-        gold_table = gold_customer_agg,
-        environment = "test"
+        logger=logger,
+        super_spark=super_spark,
+        super_tracer=super_tracer,
+        superlake_dt=superlake_dt,
+        pipeline_name="customer_pipeline_gold",
+        gold_function=gold_customer_agg_function,
+        gold_table=gold_customer_agg,
+        environment="test"
     )
     gold_pipeline.execute()
-
 
     print("-------------------- waiting 5 seconds --------------------")
     time.sleep(5)
@@ -311,32 +317,32 @@ def main():
 
     # source > bronze > silver pipeline
     customer_pipeline = SuperPipeline(
-        logger = logger,
-        super_spark = super_spark,
-        super_tracer = super_tracer,
-        superlake_dt = superlake_dt,
-        pipeline_name = "customer_pipeline_silver",
-        bronze_table = bronze_customer,
-        silver_table = silver_customer,
-        cdc_function = customer_cdc,
-        tra_function = customer_tra,
-        del_function = customer_del,
-        force_cdc = False,
+        logger=logger,
+        super_spark=super_spark,
+        super_tracer=super_tracer,
+        superlake_dt=superlake_dt,
+        pipeline_name="customer_pipeline_silver",
+        bronze_table=bronze_customer,
+        silver_table=silver_customer,
+        cdc_function=customer_cdc,
+        tra_function=customer_tra,
+        del_function=customer_del,
+        force_cdc=False,
         force_caching=True,
-        environment = "test"
+        environment="test"
     )
     customer_pipeline.execute()
 
     # gold pipeline
     gold_pipeline = SuperGoldPipeline(
-        logger = logger,
-        super_spark = super_spark,
-        super_tracer = super_tracer,
-        superlake_dt = superlake_dt,
-        pipeline_name = "customer_pipeline_gold",
-        gold_function = gold_customer_agg_function,
-        gold_table = gold_customer_agg,
-        environment = "test"
+        logger=logger,
+        super_spark=super_spark,
+        super_tracer=super_tracer,
+        superlake_dt=superlake_dt,
+        pipeline_name="customer_pipeline_gold",
+        gold_function=gold_customer_agg_function,
+        gold_table=gold_customer_agg,
+        environment="test"
     )
     gold_pipeline.execute()
 
@@ -350,32 +356,32 @@ def main():
     # same superlake_dt (simulating a rerun)
     # source > bronze > silver pipeline
     customer_pipeline = SuperPipeline(
-        logger = logger,
-        super_spark = super_spark,
-        super_tracer = super_tracer,
-        superlake_dt = superlake_dt,
-        pipeline_name = "customer_pipeline_silver",
-        bronze_table = bronze_customer,
-        silver_table = silver_customer,
-        cdc_function = customer_cdc,
-        tra_function = customer_tra,
-        del_function = customer_del,
-        force_cdc = True,
-        environment = "test",
+        logger=logger,
+        super_spark=super_spark,
+        super_tracer=super_tracer,
+        superlake_dt=superlake_dt,
+        pipeline_name="customer_pipeline_silver",
+        bronze_table=bronze_customer,
+        silver_table=silver_customer,
+        cdc_function=customer_cdc,
+        tra_function=customer_tra,
+        del_function=customer_del,
+        force_cdc=True,
+        environment="test",
         force_caching=True
     )
     customer_pipeline.execute()
 
     # gold pipeline
     gold_pipeline = SuperGoldPipeline(
-        logger = logger,
-        super_spark = super_spark,
-        super_tracer = super_tracer,
-        superlake_dt = superlake_dt,
-        pipeline_name = "customer_pipeline_gold",
-        gold_function = gold_customer_agg_function,
-        gold_table = gold_customer_agg,
-        environment = "test"
+        logger=logger,
+        super_spark=super_spark,
+        super_tracer=super_tracer,
+        superlake_dt=superlake_dt,
+        pipeline_name="customer_pipeline_gold",
+        gold_function=gold_customer_agg_function,
+        gold_table=gold_customer_agg,
+        environment="test"
     )
     gold_pipeline.execute()
 
@@ -388,6 +394,7 @@ def main():
     bronze_customer.vacuum(spark)
     silver_customer.vacuum(spark)
     gold_customer_agg.vacuum(spark)
+
 
 if __name__ == "__main__":
     main() 
