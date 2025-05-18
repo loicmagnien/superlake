@@ -6,4 +6,4 @@ yaml
 pytz
 loguru
 mypy
-pytest 
+pytest

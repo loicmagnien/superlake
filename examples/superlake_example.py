@@ -1,15 +1,13 @@
 """Example usage of SuperLake package."""
 
-# fix the import path
-import sys
-import os
-
 # Standard Library
 import pyspark.sql.types as T
 import pyspark.sql.functions as F
 from datetime import date, datetime
 from pyspark.sql import DataFrame
 import time
+import sys
+import os
 
 # fix the import path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
