@@ -2,11 +2,11 @@ from setuptools import setup, find_packages
 
 setup(
     name="superlake",
-    version="0.1.4",
+    version="1.0.0",
     packages=find_packages(),
     install_requires=[
-        "pyspark>=3.5.3",
-        "delta-spark>=3.3.0",
+        "pyspark>=3.5.0",
+        "delta-spark>=3.1.0",
         "pandas>=1.0.0",
         "pytz",
         "applicationinsights",
@@ -30,4 +30,4 @@ setup(
         "Programming Language :: Python :: 3.9",
     ],
     python_requires=">=3.7",
-) 
+)
