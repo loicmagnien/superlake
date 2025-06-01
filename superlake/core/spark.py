@@ -1,43 +1,57 @@
 """Spark session management for SuperLake."""
- 
 import sys
-import os
-import yaml
 from pyspark.sql import SparkSession
-
-# Helper to load config.yaml
-CONFIG_PATH = os.environ.get("SUPERLAKE_CONFIG", "config.yaml")
-
-
-# Load the config.yaml file
-def load_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r") as f:
-            return yaml.safe_load(f)
-    return {}
 
 
 class SuperSpark:
-    def __init__(self, 
+    def __init__(self,
                  session_name: str,
-                 warehouse_dir: str = None, 
-                 external_path: str = None, 
+                 warehouse_dir: str = None,
+                 external_path: str = None,
                  catalog_name: str = None
                  ):
         """
-        Initialize a Spark session with Delta Lake support and store configuration.
+        Initialize a Spark session with Delta Lake support and metastore/catalog configuration.
 
         Args:
-            warehouse_dir (str): Path to the Spark SQL warehouse directory. Defaults to './data/spark-warehouse'.
-            external_path (str): Root path for external tables. Defaults to './data/external-table/'.
-            catalog_name (str): Name of the catalog to use (for Unity Catalog). Defaults to None.
+            session_name (str): Name of the Spark session.
+            Usually different for each pipeline and environment.
+            The session name helps you trace which job produced which logs or metrics.
+
+            warehouse_dir (str): Path to the Spark SQL warehouse directory.
+            This is the directory where managed Delta Lake tables will be stored.
+            example:
+                - legacy: spark.sql.warehouse.dir + /schema.db/table/
+                - databricks: dbfs:/user/hive/warehouse + /schema.db/table/
+                - Unity Catalog : looks like abfss://container@account.dfs.core.windows.net/UUID/
+                metastore_default_location = (
+                    spark.sql("SHOW EXTERNAL LOCATIONS")
+                    .filter("name = 'metastore_default_location'")
+                    .select("url").collect()[0][0]
+                )
+                this is the metastore_default_location made of a storage url and a UUID,
+                the tables are in metastore_default_location + /tables/UUID/
+
+            external_path (str): Root path for external tables.
+            This is the directory where external tables will be stored.
+            SuperLake uses external tables to store data in a storage account / location.
+            example:
+                - legacy: /User/data/custom_path/ + schema/table/
+                - databricks: dbfs:/ or /mnt/ + custom_path/ + schema/table/
+                - Unity Catalog : abfss://container@account.dfs.core.windows.net/ + custom_path/ + schema/table/
+                where abfss://container@account.dfs.core.windows.net is an external_location.
+                existing external locations can be found with spark.sql("SHOW EXTERNAL LOCATIONS")
+
+            catalog_name (str): Name of the catalog to use (for Unity Catalog).
+            example:
+                - legacy: hive_metastore
+                - databricks: spark_catalog (alias for hive_metastore)
+                - Unity Catalog : main, dev, prod, my_company_catalog
         """
-        config = load_config()
         self.session_name = session_name
-        self.warehouse_dir = warehouse_dir or config.get("warehouse_dir", "./data/spark-warehouse")
-        self.external_path = external_path or config.get("external_path", "./data/external-table")
-        self.catalog_name = catalog_name or config.get("catalog_name")
-        
+        self.warehouse_dir = warehouse_dir
+        self.external_path = external_path
+        self.catalog_name = catalog_name
         self.spark = self._create_spark_session()
 
     def _create_spark_session(self) -> SparkSession:
@@ -51,22 +65,37 @@ class SuperSpark:
 
         builder = (
             SparkSession.builder
+            # Purpose: Sets the name of the Spark application (as seen in Spark UI, logs, etc.).
+            # Why: Helps to identify the job in Spark’s monitoring tools.
             .appName(self.session_name)
-            # add delta lake support
-            .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.3.0")
+            # Purpose: Attaches the Delta Lake library to the Spark session.
+            # Why: Required for Delta Lake support (ACID tables, time travel, etc.).
+            .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.1.0")
+            # Purpose: Enables Delta Lake's SQL extensions.
+            # Why: Allows to use Delta Lake's SQL commands (e.g., CREATE TABLE AS SELECT).
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            # Purpose: Configures the Delta Lake catalog.
+            # Why: Allows to use Delta Lake's catalog commands (e.g., CREATE TABLE AS SELECT).
             .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-            # set the warehouse directory
+            # Purpose: Sets the warehouse directory for Delta Lake.
+            # Why: Specifies where Delta Lake tables will be stored.
             .config("spark.sql.warehouse.dir", self.warehouse_dir)
-            # set the python path so driver and executor use the same python interpreter
+            # Purpose: Ensures the driver and executor use the same Python interpreter.
+            # Why: Maintains consistency across the Spark cluster.
             .config("spark.pyspark.python", sys.executable)
             .config("spark.pyspark.driver.python", sys.executable)
         )
-        spark = builder.getOrCreate()
 
-        # set the catalog name
         if self.catalog_name:
-            spark.conf.set("spark.sql.catalog", self.catalog_name)
+            # Purpose: Sets the default catalog for the Spark session.
+            # Why: Specifies the catalog to use when no other catalog is specified.
+            builder = builder.config("spark.sql.defaultCatalog", self.catalog_name)
+            # Purpose: Sets the catalog for the Spark session.
+            # Why: Specifies the catalog to use when no other catalog is specified.
+            builder = builder.config("spark.sql.catalog", self.catalog_name)
+
+        # create the spark session
+        spark = builder.getOrCreate()
 
         # set the verbosity of the spark session
         spark.conf.set("spark.sql.debug.maxToStringFields", 2000)

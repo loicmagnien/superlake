@@ -8,10 +8,19 @@ import pyspark.sql.functions as F
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from superlake.core.dataframe import SuperDataframe
 
+WAREHOUSE_DIR = "./tests/data/spark-warehouse"
+EXTERNAL_PATH = "./tests/data/external-table"
+CATALOG_NAME = "spark_catalog"
+
 @pytest.fixture(scope="module")
 def spark():
     from superlake.core import SuperSpark
-    return SuperSpark(session_name="SparkSession for SuperLake").spark
+    return SuperSpark(
+        session_name="SparkSession for SuperLake",
+        warehouse_dir=WAREHOUSE_DIR,
+        external_path=EXTERNAL_PATH,
+        catalog_name=CATALOG_NAME
+    ).spark
 
 
 # test_clean_columns_names
@@ -30,7 +39,7 @@ def test_clean_columns_names(spark):
 # test_clean_column_values
 def test_clean_column_values(spark):
     data = [
-        (1, 'value__', 'value'), 
+        (1, 'value__', 'value'),
         (2, 'value_2_!', 'value_2')
     ]
     columns = ['id', 'column_to_clean', 'column_cleaned']
@@ -59,7 +68,7 @@ def test_cast_columns(spark):
     sdf = SuperDataframe(df)
     casted_df = sdf.cast_columns(target_schema)
     # check the count of rows is the same
-    assert casted_df.count() == 2  
+    assert casted_df.count() == 2
     # check the schema has been casted correctly
     assert casted_df.schema == target_schema
 
@@ -250,3 +259,66 @@ def test_drop_null_values(spark):
     # Drop rows where either 'name' or 'score' is null
     dropped_df3 = sdf.drop_null_values(['name', 'score'])
     assert dropped_df3.count() == 1
+
+
+def test_super_union(spark):
+    data1 = [(1, "Alice"), (2, "Bob")]
+    columns1 = ["id", "name"]
+    df1 = spark.createDataFrame(data1, columns1)
+
+    data2 = [(3, "Charlie", 100), (4, "David", 200)]
+    columns2 = ["id", "name", "score"]
+    df2 = spark.createDataFrame(data2, columns2)
+
+    # Only df2 has 'score', df1 does not
+    unioned_df = SuperDataframe.super_union_by_name([df1, df2])
+
+    # The resulting columns should be ['id', 'name', 'score']
+    assert set(unioned_df.columns) == {"id", "name", "score"}
+    # There should be 4 rows
+    assert unioned_df.count() == 4
+
+    # Rows from df1 should have score == None
+    rows = unioned_df.filter(F.col("id").isin([1, 2])).collect()
+    for row in rows:
+        assert row["score"] is None
+
+    # Rows from df2 should have their original score
+    rows = unioned_df.filter(F.col("id").isin([3, 4])).collect()
+    for row in rows:
+        assert row["score"] in [100, 200]
+
+
+def test_super_union_type_promotion(spark):
+    import pyspark.sql.types as T
+
+    # IntegerType and StringType -> StringType
+    df1 = spark.createDataFrame([(1,)], ["value"])
+    df2 = spark.createDataFrame([("2",)], ["value"])
+    unioned = SuperDataframe.super_union_by_name([df1, df2])
+    assert unioned.schema["value"].dataType == T.StringType()
+    assert set([row["value"] for row in unioned.collect()]) == {"1", "2"}
+
+    # IntegerType and DoubleType -> DoubleType
+    df1 = spark.createDataFrame([(1,)], ["value"])
+    df2 = spark.createDataFrame([(2.5,)], ["value"])
+    unioned = SuperDataframe.super_union_by_name([df1, df2])
+    assert unioned.schema["value"].dataType == T.DoubleType()
+    values = set([row["value"] for row in unioned.collect()])
+    assert values == {1.0, 2.5}
+
+    # IntegerType and LongType -> LongType
+    df1 = spark.createDataFrame([(1,)], ["value"])
+    df2 = spark.createDataFrame([(2**33,)], ["value"])  # Large int, will be LongType
+    unioned = SuperDataframe.super_union_by_name([df1, df2])
+    assert unioned.schema["value"].dataType == T.LongType()
+    values = set([row["value"] for row in unioned.collect()])
+    assert values == {1, 2**33}
+
+    # BooleanType only -> BooleanType
+    df1 = spark.createDataFrame([(True,)], ["value"])
+    df2 = spark.createDataFrame([(False,)], ["value"])
+    unioned = SuperDataframe.super_union_by_name([df1, df2])
+    assert unioned.schema["value"].dataType == T.BooleanType()
+    values = set([row["value"] for row in unioned.collect()])
+    assert values == {True, False}

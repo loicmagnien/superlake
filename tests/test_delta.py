@@ -202,7 +202,7 @@ def test_save_append(table_fixture_name, request, spark):
 
 # [register_table_in_catalog] for managed table
 def test_register_table_in_catalog_managed(managed_table, spark):
-    # Note: DROP TABLE on managed tables deletes the data, so running a SELECT on the table should return: 
+    # Note: DROP TABLE on managed tables deletes the data, so running a SELECT on the table should return:
     # pyspark.errors.exceptions.captured.AnalysisException: [DELTA_READ_TABLE_WITHOUT_COLUMNS]
     # we would need to insert the data into the table, etc. already done in the test_save_append_managed
     spark.sql(f"DROP TABLE IF EXISTS {managed_table.full_table_name()}")
@@ -295,7 +295,7 @@ def test_check_table_schema(table_fixture_name, request):
 @pytest.mark.parametrize("table_fixture_name", ["managed_table", "external_table"])
 def test_read(table_fixture_name, request, spark):
     table = request.getfixturevalue(table_fixture_name)
-    df_from_table = table.read(spark)
+    df_from_table = table.read()
     assert df_from_table.count() == 1
     assert df_from_table.collect()[0] == (1, "foo", "bar", SUPERLAKE_DT)
 
@@ -366,16 +366,16 @@ def test_post_drop_check_table_schema(table_fixture_name, request):
 
 # post drop [read] with error handling for managed table
 def test_post_drop_read_managed(managed_table, spark):
-    try: 
-        managed_table.read(spark).count()
+    try:
+        managed_table.read().count()
     except Exception as e:
         assert ("TABLE_OR_VIEW_NOT_FOUND") in str(e)
 
 
 # post drop [read] with error handling for external table
 def test_post_drop_read_external(external_table, spark):
-    try: 
-        external_table.read(spark).count()
+    try:
+        external_table.read().count()
     except Exception as e:
         assert ("PATH_NOT_FOUND") in str(e)
 
@@ -475,7 +475,7 @@ def test_get_merge_condition_and_updates(table_fixture_name, request, spark):
 def test_post_drop_read(table_fixture_name, request, spark):
     table = request.getfixturevalue(table_fixture_name)
     try:
-        table.read(spark).count()
+        table.read().count()
     except Exception as e:
         if table_fixture_name == "managed_table":
             assert ("TABLE_OR_VIEW_NOT_FOUND") in str(e)
@@ -706,7 +706,6 @@ def test_save_modes_and_schema_evolution(super_spark, table_type, schema_evoluti
     ([], SCD_DATA_NOCOL, SCD_SCHEMA),
 ])
 def test_save_merge_scd(super_spark, table_type, schema_evolution_option, pk_type, scd_change_cols, data, schema):
-    
     # Select PKs and schema for composite
     if pk_type == "single":
         primary_keys = ["id"]
