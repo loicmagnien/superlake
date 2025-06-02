@@ -125,6 +125,7 @@ class SuperDeltaTable:
     ) -> None:
         """
         Initialize a SuperDeltaTable instance.
+
         Args:
             super_spark (SuperSpark): The SuperSpark instance.
             catalog_name (str): Catalog name (can be None for classic Spark).
@@ -257,12 +258,18 @@ class SuperDeltaTable:
             self.logger.warning(f"Could not check schema: {e}")
             return False
 
-    def get_table_path(self, spark: SparkSession) -> str:
+    def get_table_path(self, spark: Optional[SparkSession] = None) -> str:
         """
         Returns the table path (physical location) for managed or external tables.
         For managed tables, uses Spark catalog to get the location.
         For external tables, returns the absolute path.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
+            str: The table path.
         """
+        if spark is None:
+            spark = self.spark
         # managed tables
         if self.managed:
             try:
@@ -283,11 +290,17 @@ class SuperDeltaTable:
                 table_path = os.path.abspath(self.table_path)
             return table_path
 
-    def get_schema_path(self, spark: SparkSession) -> str:
+    def get_schema_path(self, spark: Optional[SparkSession] = None) -> str:
         """
         Returns the schema/database location URI for managed tables using Spark catalog API,
         or the parent directory for external tables.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
+            str: The schema/database location URI.
         """
+        if spark is None:
+            spark = self.spark
         # managed tables
         if self.managed:
             try:
@@ -305,14 +318,16 @@ class SuperDeltaTable:
             table_path = os.path.abspath(self.table_path)
             return os.path.dirname(table_path)
 
-    def is_delta_table_path(self, spark: SparkSession) -> bool:
+    def is_delta_table_path(self, spark: Optional[SparkSession] = None) -> bool:
         """
         Checks if the table_path is a valid Delta table.
-        args:
-            spark (SparkSession): The Spark session.
-        returns:
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
             bool: True if the table_path is a valid Delta table, False otherwise.
         """
+        if spark is None:
+            spark = self.spark
         table_path = self.get_table_path(spark)
         try:
             return DeltaTable.isDeltaTable(spark, table_path)
@@ -320,25 +335,29 @@ class SuperDeltaTable:
             self.logger.info(f"Table {table_path} is not a Delta table: {e}")
             return False
 
-    def schema_exists(self, spark: SparkSession) -> bool:
+    def schema_exists(self, spark: Optional[SparkSession] = None) -> bool:
         """
         Checks if the schema exists in the catalog using Spark SQL/catalog API.
-        args:
-            spark (SparkSession): The Spark session.
-        returns:
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
             bool: True if the schema exists, False otherwise.
         """
+        if spark is None:
+            spark = self.spark
         db_names = [db.name.strip('`') for db in spark.catalog.listDatabases()]
         return self.schema_name in db_names
 
-    def table_exists(self, spark: SparkSession) -> bool:
+    def table_exists(self, spark: Optional[SparkSession] = None) -> bool:
         """
         Checks if the table exists in the catalog (managed) or if the path is a Delta table (external).
-        args:
-            spark (SparkSession): The Spark session.
-        returns:
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
             bool: True if the table exists, False otherwise.
         """
+        if spark is None:
+            spark = self.spark
         # managed tables
         if self.managed:
             if self.is_unity_catalog():
@@ -368,41 +387,47 @@ class SuperDeltaTable:
         table_path = self.get_table_path(spark)
         return os.path.exists(table_path) and bool(os.listdir(table_path))
 
-    def schema_and_table_exists(self, spark: SparkSession) -> bool:
+    def schema_and_table_exists(self, spark: Optional[SparkSession] = None) -> bool:
         """
         Checks if the schema and table exists in the catalog.
-        args:
-            spark (SparkSession): The Spark session.
-        returns:
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
             bool: True if the schema and table exists, False otherwise.
         """
+        if spark is None:
+            spark = self.spark
         return self.schema_exists(spark) and self.table_exists(spark)
 
-    def ensure_schema_exists(self, spark: SparkSession):
+    def ensure_schema_exists(self, spark: Optional[SparkSession] = None):
         """
         Ensures a schema exists in the catalog (supports Unity Catalog and classic Spark).
-        args:
-            spark (SparkSession): The Spark session.
-        returns:
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
             None
         """
+        if spark is None:
+            spark = self.spark
         if self.catalog_name:
             schema_qualified = f"{self.catalog_name}.{self.schema_name}"
         else:
             schema_qualified = self.schema_name
         spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema_qualified}")
 
-    def register_table_in_catalog(self, spark: SparkSession, log=True):
+    def register_table_in_catalog(self, spark: Optional[SparkSession] = None, log=True):
         """
         Registers the table in the Spark catalog with the correct location.
         This function is mostly relevant for external tables.
         However, it is also called for managed tables on legacy/OSS Spark.
-        args:
-            spark (SparkSession): The Spark session.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
             log (bool): Whether to log the operation.
-        returns:
+        Returns:
             None
         """
+        if spark is None:
+            spark = self.spark
         # Ensure schema exists with catalog support
         self.ensure_schema_exists(spark)
         # get the table path
@@ -413,11 +438,18 @@ class SuperDeltaTable:
             f"Registered {'managed' if self.managed else 'external'} Delta table {self.full_table_name()}"
         )
 
-    def alter_catalog_table_schema(self, spark: SparkSession, log=True):
+    def alter_catalog_table_schema(self, spark: Optional[SparkSession] = None, log=True):
         """
         Compares and alters the schema of the catalog/metastore table to match the schema
         of the Delta table at the external location. Only supported for external tables.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+            log (bool): Whether to log the operation.
+        Returns:
+            None
         """
+        if spark is None:
+            spark = self.spark
         # managed tables
         if self.managed:
             raise NotImplementedError("Schema sync is only supported for external tables.")
@@ -445,7 +477,7 @@ class SuperDeltaTable:
                 f"Schema of {self.full_table_name()} updated to match Delta table at {self.table_path}."
             )
 
-    def ensure_table_exists(self, spark: SparkSession, log=True):
+    def ensure_table_exists(self, spark: Optional[SparkSession] = None, log=True):
         """
         Ensures a Delta table exists at a path, registering and creating it if needed.
         Here are the steps:
@@ -454,12 +486,16 @@ class SuperDeltaTable:
         - check if the table exists in the catalog, if not:
             - in the case of UC, create the table using SQL
             - in the case of legacy/OSS metastores, use DeltaTable builder
-        args:
-            spark (SparkSession): The Spark session.
+
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
             log (bool): Whether to log the operation.
-        returns:
+
+        Returns:
             None
         """
+        if spark is None:
+            spark = self.spark
         # build the effective schema, adding SCD columns if needed for MergeSCD mode
         effective_table_schema = self.table_schema
         if self.table_save_mode == TableSaveMode.MergeSCD:
@@ -605,8 +641,17 @@ class SuperDeltaTable:
                 # Register the table in the catalog (for both managed and external)
                 self.register_table_in_catalog(spark, log=log)
 
-    def optimize(self, spark: SparkSession):
-        """Runs OPTIMIZE and ZORDER on the Delta table, with optional file size tuning."""
+    def optimize(self, spark: Optional[SparkSession] = None):
+        """
+        Runs OPTIMIZE and ZORDER on the Delta table, with optional file size tuning.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+
+        Returns:
+            None
+        """
+        if spark is None:
+            spark = self.spark
         self.logger.info(f"Starting optimize for table {self.full_table_name()}.")
         # check if table exists
         if not self.table_exists(spark):
@@ -654,8 +699,18 @@ class SuperDeltaTable:
         self.logger.metric("optimize_table_optimization_duration_sec", round(t3-t2, 2))
         self.logger.metric("optimize_table_total_duration_sec", round(t3-t0, 2))
 
-    def vacuum(self, spark: SparkSession, retention_hours: int = 168):
-        """Runs the VACUUM command on a Delta table to clean up old files."""
+    def vacuum(self, spark: Optional[SparkSession] = None, retention_hours: int = 168):
+        """
+        Runs the VACUUM command on a Delta table to clean up old files.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+            retention_hours (int): Number of hours to retain data.
+
+        Returns:
+            None
+        """
+        if spark is None:
+            spark = self.spark
         t0 = time.time()
         if not self.table_exists(spark):
             self.register_table_in_catalog(spark)
@@ -667,15 +722,31 @@ class SuperDeltaTable:
         self.logger.metric("vacuum_table_vacuum_duration_sec", round(t2-t1, 2))
         self.logger.metric("vacuum_table_total_duration_sec", round(t2-t0, 2))
 
-    def read(self) -> DataFrame:
-        """Returns a Spark DataFrame for the table."""
+    def read(self, spark: Optional[SparkSession] = None) -> DataFrame:
+        """
+        Returns a Spark DataFrame for the table.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
+            DataFrame: The DataFrame.
+        """
+        if spark is None:
+            spark = self.spark
         if self.managed:
-            return self.spark.read.table(self.full_table_name())
+            return spark.read.table(self.full_table_name())
         else:
             return self.spark.read.format("delta").load(self.table_path)
 
-    def evolve_schema_if_needed(self, df, spark):
-        """Evolve the Delta table schema to match the DataFrame if schema_evolution_option is Merge."""
+    def evolve_schema_if_needed(self, df, spark: Optional[SparkSession] = None):
+        """Evolve the Delta table schema to match the DataFrame if schema_evolution_option is Merge.
+        Args:
+            df (DataFrame): The DataFrame to evolve the schema of.
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
+            None
+        """
+        if spark is None:
+            spark = self.spark
         if self.schema_evolution_option == SchemaEvolution.Merge:
             # get current table columns and compare to new DataFrame columns
             if self.table_exists(spark):
@@ -704,16 +775,18 @@ class SuperDeltaTable:
                 else:
                     writer.save(self.table_path)
 
-    def align_df_to_table_schema(self, df, spark):
+    def align_df_to_table_schema(self, df, spark: Optional[SparkSession] = None):
         """
         Align DataFrame columns to match the target table schema (cast types, add missing columns as nulls,
         drop extra columns if configured).
         args:
             df (DataFrame): The DataFrame to align.
-            spark (SparkSession): The Spark session.
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
         returns:
             DataFrame: The aligned DataFrame.
         """
+        if spark is None:
+            spark = self.spark
         # Get the target schema (from the table if it exists, else from self.table_schema)
         if self.table_exists(spark):
             if self.managed:
@@ -753,8 +826,16 @@ class SuperDeltaTable:
             self.logger.info(f"Added missing columns as nulls: {missing_columns}")
         return df
 
-    def get_delta_table(self, spark):
-        """Return the correct DeltaTable object for managed or external tables."""
+    def get_delta_table(self, spark: Optional[SparkSession] = None):
+        """
+        Return the correct DeltaTable object for managed or external tables.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
+            DeltaTable: The DeltaTable object.
+        """
+        if spark is None:
+            spark = self.spark
         if self.managed:
             # Managed table: use forName
             target_table = DeltaTable.forName(spark, self.forname_table_name())
@@ -764,14 +845,28 @@ class SuperDeltaTable:
         return target_table
 
     def write_df(
-        self,
-        df: DataFrame,
-        mode: str,
-        merge_schema: bool = False,
-        overwrite_schema: bool = False
-    ) -> None:
+            self,
+            df: DataFrame,
+            mode: str,
+            merge_schema: bool = False,
+            overwrite_schema: bool = False,
+            spark: Optional[SparkSession] = None
+            ) -> None:
+        """
+        Write a DataFrame to a Delta table.
+        Args:
+            df (DataFrame): The DataFrame to write.
+            mode (str): The mode to use for the write.
+            merge_schema (bool): Whether to merge the schema of the DataFrame with the table schema.
+            overwrite_schema (bool): Whether to overwrite the schema of the table.
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+        Returns:
+            None
+        """
+        if spark is None:
+            spark = self.spark
         if merge_schema:
-            df = self.align_df_to_table_schema(df, self.spark)
+            df = self.align_df_to_table_schema(df, spark)
         writer = df.write.format("delta").mode(mode)
         if self.partition_cols:
             writer = writer.partitionBy(self.partition_cols)
@@ -797,7 +892,18 @@ class SuperDeltaTable:
         change_cond = ' OR '.join([f"target.{c} <> source.{c}" for c in scd_change_cols]) if scd_change_cols else None
         return cond, updates, change_cond
 
-    def merge(self, df: DataFrame, spark: SparkSession):
+    def merge(self, df: DataFrame, spark: Optional[SparkSession] = None):
+        """
+        Performs a merge (upsert) operation on the Delta table.
+        Args:
+            df (DataFrame): The DataFrame to merge.
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+
+        Returns:
+            None
+        """
+        if spark is None:
+            spark = self.spark
         self.evolve_schema_if_needed(df, spark)
         delta_table = self.get_delta_table(spark)
         cond, updates, _ = self.get_merge_condition_and_updates(df)
@@ -805,7 +911,18 @@ class SuperDeltaTable:
             df.alias("source"), cond
         ).whenMatchedUpdate(set=updates).whenNotMatchedInsert(values=updates).execute()
 
-    def merge_scd(self, df: DataFrame, spark: SparkSession):
+    def merge_scd(self, df: DataFrame, spark: Optional[SparkSession] = None):
+        """
+        Performs a Slowly Changing Dimension (SCD) merge operation on the Delta table.
+        Args:
+            df (DataFrame): The DataFrame to merge.
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+
+        Returns:
+            None
+        """
+        if spark is None:
+            spark = self.spark
         # Validate scd_change_cols here
         if self.scd_change_cols is not None:
             for col in self.scd_change_cols:
@@ -854,7 +971,8 @@ class SuperDeltaTable:
     def save(self, df: DataFrame, mode: str = 'append', spark: Optional[SparkSession] = None, log=True):
         """Writes a DataFrame to a Delta table, supporting append, merge, merge_scd, and overwrite modes."""
         start_time = time.time()
-        spark = self.super_spark.spark
+        if spark is None:
+            spark = self.spark
         # Always ensure table exists before any operation
         if not self.table_exists(spark):
             log and self.logger.info(f"Table {self.full_table_name()} does not exist, creating it")
@@ -891,22 +1009,25 @@ class SuperDeltaTable:
         log and self.logger.metric(f"{self.full_table_name()}.save_row_count", df.count())
         log and self.logger.metric(f"{self.full_table_name()}.save_duration_sec", round(time.time() - start_time, 2))
 
-    def delete(self, deletions_df: DataFrame, superlake_dt: Optional[datetime] = None):
+    def delete(self, deletions_df: DataFrame, superlake_dt: Optional[datetime] = None, spark: Optional[SparkSession] = None):
         """
         Delete all rows from the table that match the deletions_df.
         The deletions_df must have the same schema as the table.
         if the table is a SCD table, the delete rows will be closed using the superlake_dt.
         if the table is not a SCD table, the delete rows will be deleted using the primary keys.
-        args:
+        Args:
             deletions_df (DataFrame): The DataFrame to delete from the original delta table
             superlake_dt (datetime): The timestamp to use for scd_end_dt
-        returns:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+
+        Returns:
             None
         """
+        if spark is None:
+            spark = self.spark
         start_time = time.time()
         if superlake_dt is None:
             superlake_dt = datetime.now()
-        spark = self.super_spark.spark
         if self.table_exists(spark):
             target_table = self.get_delta_table(spark)
             to_delete_count = deletions_df.count()
@@ -971,8 +1092,16 @@ class SuperDeltaTable:
             self.logger.metric(f"{self.full_table_name()}.delete_duration_sec", round(time.time() - start_time, 2))
 
     def drop(self, spark: Optional[SparkSession] = None):
-        """Drops the table from the catalog and removes the data files in storage."""
-        spark = self.super_spark.spark
+        """
+        Drops the table from the catalog and removes the data files in storage.
+        Args:
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+
+        Returns:
+            None
+        """
+        if spark is None:
+            spark = self.spark
         spark.sql(f"DROP TABLE IF EXISTS {self.full_table_name()}")
         # managed tables (remove the files at the table location for legacy/OSS metastores)
         if self.managed:
@@ -985,16 +1114,18 @@ class SuperDeltaTable:
             shutil.rmtree(self.table_path, ignore_errors=True)
             self.logger.info(f"Dropped Delta Table {self.full_table_name()} (external) and removed files")
 
-    def change_uc_columns_comments(self, spark: SparkSession, log: bool = True):
+    def change_uc_columns_comments(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
         For Unity Catalog tables, set column comments based on the 'description' in the
         metadata of each StructField in self.table_schema.
         Args:
-            spark (SparkSession): The Spark session.
             log (bool): Whether to log the operation.
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
         Returns:
             None
         """
+        if spark is None:
+            spark = self.spark
         if not self.is_unity_catalog():
             log and self.logger.info(
                 f"change_uc_columns_comments: Not a Unity Catalog table, skipping for {self.full_table_name()}.")
@@ -1016,15 +1147,17 @@ class SuperDeltaTable:
                     f"Set comment for column `{field.name}` in {self.full_table_name()}: {description}"
                     )
 
-    def change_uc_table_comment(self, spark: SparkSession, log: bool = True):
+    def change_uc_table_comment(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
         For Unity Catalog tables, set the table comment using self.table_description.
         Args:
-            spark (SparkSession): The Spark session.
             log (bool): Whether to log the operation.
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
         Returns:
             None
         """
+        if spark is None:
+            spark = self.spark
         if not self.is_unity_catalog():
             log and self.logger.info(
                 f"change_uc_table_comment: Not a Unity Catalog table, skipping for {self.full_table_name()}."
@@ -1046,16 +1179,19 @@ class SuperDeltaTable:
             f"Set table comment for {self.full_table_name()}: {self.table_description}"
         )
 
-    def change_uc_table_and_columns_comments(self, spark: SparkSession, log: bool = True):
+    def change_uc_table_and_columns_comments(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
         For Unity Catalog tables, set the table comment using self.table_description and
         the columns comments using the 'description' in the metadata of each StructField
         in self.table_schema.
         Args:
-            spark (SparkSession): The Spark session.
             log (bool): Whether to log the operation.
+            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
+
         Returns:
             None
         """
-        self.change_uc_table_comment(spark, log)
-        self.change_uc_columns_comments(spark, log)
+        if spark is None:
+            spark = self.spark
+        self.change_uc_table_comment(log, spark)
+        self.change_uc_columns_comments(log, spark)
