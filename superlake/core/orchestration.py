@@ -204,6 +204,8 @@ class SuperOrchestrator:
         return module_name, func_name, folder
 
     def import_and_run(self, module_name, func_name, folder, params):
+        if module_name.startswith('.'):
+            module_name = module_name.lstrip('.')
         mod = importlib.import_module(module_name)
         func = getattr(mod, func_name)
         if folder == "ingestion":
