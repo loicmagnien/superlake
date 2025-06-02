@@ -1117,7 +1117,8 @@ class SuperDeltaTable:
     def change_uc_columns_comments(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
         For Unity Catalog tables, set column comments based on the 'description' in the
-        metadata of each StructField in self.table_schema.
+        metadata of each StructField in self.table_schema. Only update if different.
+        Log a warning if the current comment differs from the StructType description.
         Args:
             log (bool): Whether to log the operation.
             spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
@@ -1130,12 +1131,32 @@ class SuperDeltaTable:
             log and self.logger.info(
                 f"change_uc_columns_comments: Not a Unity Catalog table, skipping for {self.full_table_name()}.")
             return
+        # Fetch current column comments from the catalog
+        columns_info = spark.sql(
+            f"DESCRIBE TABLE EXTENDED `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
+        ).toPandas()
+        # Build a dict: column_name -> current_comment
+        current_comments = {}
+        for _, row in columns_info.iterrows():
+            col_name = row['col_name']
+            comment = row['comment'] if 'comment' in row and row['comment'] is not None else None
+            if col_name and not col_name.startswith('#'):
+                current_comments[col_name] = comment
         for field in self.table_schema.fields:
             description = None
-            # PySpark >= 3.0: metadata is a dict, else may be None
             if hasattr(field, 'metadata') and field.metadata and 'description' in field.metadata:
                 description = field.metadata['description']
-            if description:
+            if not description:
+                continue  # Skip columns with no description in StructType
+            current_comment = current_comments.get(field.name)
+            if current_comment != description:
+                if current_comment is not None:
+                    log and self.logger.warning(
+                            f"Column `{field.name}` in {self.full_table_name()} has comment '{current_comment}' "
+                            f"which differs from StructType description '{description}'. Updating.")
+                else:
+                    log and self.logger.info(
+                        f"Setting comment for column `{field.name}` in {self.full_table_name()} to '{description}'")
                 # Escape single quotes in the description for SQL
                 safe_description = description.replace("'", "''")
                 sql = (
@@ -1143,13 +1164,13 @@ class SuperDeltaTable:
                     f"CHANGE COLUMN `{field.name}` COMMENT '{safe_description}'"
                 )
                 spark.sql(sql)
-                log and self.logger.info(
-                    f"Set comment for column `{field.name}` in {self.full_table_name()}: {description}"
-                    )
+            else:
+                log and self.logger.info(f"Column `{field.name}` in {self.full_table_name()} already has the correct comment.")
 
     def change_uc_table_comment(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
         For Unity Catalog tables, set the table comment using self.table_description.
+        Only update if the current comment is different. Log a warning if the current comment differs.
         Args:
             log (bool): Whether to log the operation.
             spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
@@ -1168,16 +1189,38 @@ class SuperDeltaTable:
                 f"change_uc_table_comment: No table_description set for {self.full_table_name()}, skipping."
             )
             return
-        # Escape single quotes in the description for SQL
-        safe_description = self.table_description.replace("'", "''")
-        sql = (
-            f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
-            f"SET TBLPROPERTIES ('comment' = '{safe_description}')"
-        )
-        spark.sql(sql)
-        log and self.logger.info(
-            f"Set table comment for {self.full_table_name()}: {self.table_description}"
-        )
+        # Fetch current table comment from the catalog
+        table_info = spark.sql(
+            f"DESCRIBE TABLE EXTENDED `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
+        ).toPandas()
+        # Find the row with col_name == 'Comment'
+        current_comment = None
+        for _, row in table_info.iterrows():
+            if str(row['col_name']).strip().lower() == 'comment':
+                current_comment = row['data_type'] if 'data_type' in row else row.get('comment', None)
+                break
+        # Compare and update if needed
+        if current_comment != self.table_description:
+            if current_comment is not None:
+                log and self.logger.warning(
+                    f"Table comment for {self.full_table_name()} is '{current_comment}' "
+                    f"but StructType description is '{self.table_description}'. Updating.")
+            else:
+                log and self.logger.info(
+                    f"Setting table comment for {self.full_table_name()} to '{self.table_description}'")
+            # Escape single quotes in the description for SQL
+            safe_description = self.table_description.replace("'", "''")
+            sql = (
+                f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
+                f"SET TBLPROPERTIES ('comment' = '{safe_description}')"
+            )
+            spark.sql(sql)
+            log and self.logger.info(
+                f"Set table comment for {self.full_table_name()}: {self.table_description}"
+            )
+        else:
+            log and self.logger.info(
+                f"Table {self.full_table_name()} already has the correct comment.")
 
     def change_uc_table_and_columns_comments(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
