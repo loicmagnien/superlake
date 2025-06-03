@@ -3,13 +3,64 @@ import importlib.util
 import inspect
 from pathlib import Path
 from superlake.core import SuperDeltaTable
+import pyspark.sql.types as T
+from superlake.core.delta import TableSaveMode
+
+
+class SuperCatalogQualityTable:
+    """
+    Utility class to persist data quality issues (from change_uc_table_comment and change_uc_columns_comments)
+    in a Delta table, similar to SuperTracer.
+    """
+    def __init__(self, super_spark, catalog_name, schema_name, table_name, managed, logger):
+        self.super_spark = super_spark
+        self.spark = super_spark.spark
+        self.catalog_name = catalog_name
+        self.schema_name = schema_name
+        self.table_name = table_name
+        self.logger = logger
+        self.managed = managed
+        self.dq_schema = T.StructType([
+            T.StructField("table_name", T.StringType(), True),
+            T.StructField("column_name", T.StringType(), True),
+            T.StructField("issue_type", T.StringType(), True),
+            T.StructField("current_value", T.StringType(), True),
+            T.StructField("expected_value", T.StringType(), True),
+            T.StructField("checked_at", T.TimestampType(), False),
+        ])
+        self.dq_table = SuperDeltaTable(
+            super_spark=self.super_spark,
+            catalog_name=self.catalog_name,
+            schema_name=self.schema_name,
+            table_name=self.table_name,
+            table_schema=self.dq_schema,
+            table_save_mode=TableSaveMode.Append,
+            primary_keys=["table_name", "column_name", "issue_type", "checked_at"],
+            managed=self.managed
+        )
+
+    def ensure_table_exists(self):
+        self.dq_table.ensure_table_exists(self.spark, log=False)
+
+    def save_dq_df(self, dq_df):
+        self.ensure_table_exists()
+        if dq_df is not None and dq_df.count() > 0:
+            self.dq_table.save(dq_df, mode="append", spark=self.spark, log=False)
+            self.logger.info(f"Persisted {dq_df.count()} DQ issues to {self.dq_table.full_table_name()}")
+        else:
+            self.logger.info("No DQ issues to persist.")
 
 
 class SuperCataloguer:
     """
     Utility class to discover and register all model and ingestion tables in a SuperLake lakehouse project.
     """
-    def __init__(self, project_root: str, modelisation_folder: str = "modelisation", ingestion_folder: str = "ingestion"):
+    def __init__(
+            self,
+            project_root: str,
+            modelisation_folder: str = "modelisation",
+            ingestion_folder: str = "ingestion"
+            ):
         self.project_root = project_root
         self.modelisation_folder = modelisation_folder
         self.ingestion_folder = ingestion_folder
@@ -35,10 +86,42 @@ class SuperCataloguer:
                             generators.append(obj)
         return generators
 
-    def register_model_tables(self, super_spark, catalog_name: str, logger, managed: bool, superlake_dt,
-                              register_tables: bool = True,
-                              change_table_and_columns_comments: bool = True,
-                              ):
+    def process_table_and_columns_comments(
+            self,
+            table,
+            change_table_comments,
+            change_column_comments,
+            persist_catalog_quality,
+            super_catalog_quality_table
+            ):
+        """
+        Helper to process table/column comments and persist DQ issues if requested.
+        Returns (table_dq_df, columns_dq_df)
+        """
+        # create empty dataframes to store dq issues
+        spark = super_catalog_quality_table.spark
+        table_dq_df = spark.createDataFrame([], schema=super_catalog_quality_table.dq_schema)
+        columns_dq_df = spark.createDataFrame([], schema=super_catalog_quality_table.dq_schema)
+        # change table and columns comments
+        if change_table_comments:
+            table_dq_df = table.change_uc_table_comment()
+        if change_column_comments:
+            columns_dq_df = table.change_uc_columns_comments()
+        # persist dq issues
+        if persist_catalog_quality:
+            if table_dq_df is not None and table_dq_df.count() > 0:
+                super_catalog_quality_table.save_dq_df(table_dq_df)
+            if columns_dq_df is not None and columns_dq_df.count() > 0:
+                super_catalog_quality_table.save_dq_df(columns_dq_df)
+
+    def register_model_tables(
+            self, super_spark, catalog_name: str, logger, managed: bool, superlake_dt,
+            register_tables: bool = True,
+            change_table_comments: bool = True,
+            change_column_comments: bool = True,
+            persist_catalog_quality: bool = False,
+            super_catalog_quality_table: 'SuperCatalogQualityTable' = None
+            ):
         """
         Register all model tables found in the modelisation directory.
         """
@@ -52,16 +135,22 @@ class SuperCataloguer:
                         continue
                     if register_tables:
                         table.register_table_in_catalog()
-                    if change_table_and_columns_comments:
-                        table.change_uc_table_and_columns_comments()
+                    # process and persist DQ issues
+                    self.process_table_and_columns_comments(
+                        table, change_table_comments, change_column_comments,
+                        persist_catalog_quality, super_catalog_quality_table)
                     logger.info(f"Processed model table: {table.full_table_name()}")
             except Exception as e:
                 logger.error(f"Error processing model table from {generator.__name__}: {e}")
 
-    def register_ingestion_tables(self, super_spark, catalog_name: str, logger, managed: bool, superlake_dt,
-                                  register_tables: bool = True,
-                                  change_table_and_columns_comments: bool = True,
-                                  ):
+    def register_ingestion_tables(
+            self, super_spark, catalog_name: str, logger, managed: bool, superlake_dt,
+            register_tables: bool = True,
+            change_table_comments: bool = True,
+            change_column_comments: bool = True,
+            persist_catalog_quality: bool = False,
+            super_catalog_quality_table: 'SuperCatalogQualityTable' = None
+            ):
         """
         Register all ingestion tables found in the ingestion directory.
         """
@@ -76,15 +165,20 @@ class SuperCataloguer:
                             continue
                         if register_tables:
                             table.register_table_in_catalog()
-                        if change_table_and_columns_comments:
-                            table.change_uc_table_and_columns_comments()
+                        # process and persist DQ issues
+                        self.process_table_and_columns_comments(
+                            table, change_table_comments, change_column_comments,
+                            persist_catalog_quality, super_catalog_quality_table)
                         logger.info(f"Processed ingestion table: {table.full_table_name()}")
             except Exception as e:
                 logger.error(f"Error processing ingestion table from {generator.__name__}: {e}")
 
     def execute(self, super_spark, catalog_name: str, logger, managed: bool, superlake_dt,
                 register_tables: bool = True,
-                change_table_and_columns_comments: bool = True,
+                change_table_comments: bool = True,
+                change_column_comments: bool = True,
+                persist_catalog_quality: bool = False,
+                super_catalog_quality_table: 'SuperCatalogQualityTable' = None
                 ):
         """
         Process all model and ingestion tables in the lakehouse project.
@@ -92,10 +186,12 @@ class SuperCataloguer:
         logger.info('Processing ingestion tables...')
         self.register_ingestion_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
-            register_tables, change_table_and_columns_comments
+            register_tables, change_table_comments, change_column_comments, 
+            persist_catalog_quality, super_catalog_quality_table
         )
         logger.info('Processing model tables...')
         self.register_model_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
-            register_tables, change_table_and_columns_comments
+            register_tables, change_table_comments, change_column_comments,
+            persist_catalog_quality, super_catalog_quality_table
         )

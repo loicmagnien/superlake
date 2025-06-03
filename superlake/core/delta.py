@@ -12,6 +12,7 @@ import shutil
 import time
 import pyspark.sql.functions as F
 from datetime import datetime
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 
 # custom imports
 from superlake.monitoring import SuperLogger
@@ -1125,6 +1126,17 @@ class SuperDeltaTable:
         Returns:
             None
         """
+        # Define the schema for the DQ issues DataFrame
+        dq_schema = StructType([
+                StructField("table_name", StringType(), False),
+                StructField("column_name", StringType(), False),
+                StructField("issue_type", StringType(), False),
+                StructField("current_value", StringType(), True),
+                StructField("expected_value", StringType(), True),
+                StructField("checked_at", TimestampType(), False),
+            ])
+        dq_issues = []
+        now = datetime.now()
         if spark is None:
             spark = self.spark
         if not self.is_unity_catalog():
@@ -1133,7 +1145,7 @@ class SuperDeltaTable:
             return
         # Fetch current column comments from the catalog
         columns_info = spark.sql(
-            f"DESCRIBE TABLE EXTENDED `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
+            f"DESCRIBE TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
         ).toPandas()
         # Build a dict: column_name -> current_comment
         current_comments = {}
@@ -1142,30 +1154,72 @@ class SuperDeltaTable:
             comment = row['comment'] if 'comment' in row and row['comment'] is not None else None
             if col_name and not col_name.startswith('#'):
                 current_comments[col_name] = comment
-        for field in self.table_schema.fields:
-            description = None
-            if hasattr(field, 'metadata') and field.metadata and 'description' in field.metadata:
-                description = field.metadata['description']
-            if not description:
-                continue  # Skip columns with no description in StructType
-            current_comment = current_comments.get(field.name)
+
+        def set_column_comment(col_name: str, description: str, current_comment: str = None):
             if current_comment != description:
-                if current_comment is not None:
-                    log and self.logger.warning(
-                            f"Column `{field.name}` in {self.full_table_name()} has comment '{current_comment}' "
-                            f"which differs from StructType description '{description}'. Updating.")
-                else:
-                    log and self.logger.info(
-                        f"Setting comment for column `{field.name}` in {self.full_table_name()} to '{description}'")
-                # Escape single quotes in the description for SQL
+                dq_issues.append({
+                    "table_name": self.full_table_name(),
+                    "column_name": col_name,
+                    "issue_type": "column_comment_mismatch",
+                    "current_value": current_comment,
+                    "expected_value": description,
+                    "checked_at": now,
+                })
+                log and self.logger.warning(
+                    f"Column `{col_name}` in {self.full_table_name()} has comment '{current_comment}' "
+                    f"which differs from StructType description '{description}'. Updating.")
                 safe_comment = description.replace('"', '\\"')
                 sql = (
                     f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
-                    + 'CHANGE COLUMN `' + field.name + '` COMMENT "' + safe_comment + '"'
+                    + 'CHANGE COLUMN `' + col_name + '` COMMENT "' + safe_comment + '"'
                 )
                 spark.sql(sql)
             else:
-                log and self.logger.info(f"Column `{field.name}` in {self.full_table_name()} already has the correct comment.")
+                log and self.logger.info(f"Column `{col_name}` in {self.full_table_name()} already has the correct comment '{current_comment}'")
+
+        # Prepare the list of fields to iterate over, including SCD columns if needed
+        fields = list(self.table_schema.fields)
+        if self.table_save_mode == TableSaveMode.MergeSCD:
+            scd_fields = {
+                'scd_start_dt': (T.TimestampType(), 'SCD2 Record validity start date'),
+                'scd_end_dt': (T.TimestampType(), 'SCD2 Record validity end date'),
+                'scd_is_current': (T.BooleanType(), 'SCD2 Flag for current record version'),
+            }
+            existing_field_names = {f.name for f in fields}
+            for name, (dtype, desc) in scd_fields.items():
+                if name not in existing_field_names:
+                    fields.append(T.StructField(name, dtype, True, {'description': desc}))
+
+        # Log warning for columns in the real table but not in the StructType
+        structtype_field_names = {f.name for f in fields}
+        for col_name in current_comments:
+            if col_name not in structtype_field_names:
+                dq_issues.append({
+                    "table_name": self.full_table_name(),
+                    "column_name": col_name,
+                    "issue_type": "column_missing_from_structtype",
+                    "current_value": current_comments[col_name],
+                    "expected_value": None,
+                    "checked_at": now,
+                })
+                log and self.logger.warning(
+                    f"Column `{col_name}` exists in the table {self.full_table_name()} but not in the StructType.")
+
+        # Update comments for columns in the schema (including SCD columns if needed)
+        for field in fields:
+            description = None
+            if hasattr(field, 'metadata') and field.metadata and 'description' in field.metadata:
+                description = field.metadata['description']
+            if description:
+                current_comment = current_comments.get(field.name)
+                set_column_comment(field.name, description, current_comment)
+
+        # Return a DataFrame of DQ issues if any, else None
+        if dq_issues:
+            dq_df = spark.createDataFrame(dq_issues, schema=dq_schema)
+            return dq_df
+        else:
+            return spark.createDataFrame([], schema=dq_schema)
 
     def change_uc_table_comment(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
@@ -1177,18 +1231,24 @@ class SuperDeltaTable:
         Returns:
             None
         """
+        # Define the schema for the DQ issues DataFrame
+        dq_schema = StructType([
+            StructField("table_name", StringType(), False),
+            StructField("column_name", StringType(), False),
+            StructField("issue_type", StringType(), False),
+            StructField("current_value", StringType(), True),
+            StructField("expected_value", StringType(), True),
+            StructField("checked_at", TimestampType(), False),
+        ])
+        dq_issues = []
+        now = datetime.now()
         if spark is None:
             spark = self.spark
         if not self.is_unity_catalog():
             log and self.logger.info(
                 f"change_uc_table_comment: Not a Unity Catalog table, skipping for {self.full_table_name()}."
             )
-            return
-        if not self.table_description:
-            log and self.logger.info(
-                f"change_uc_table_comment: No table_description set for {self.full_table_name()}, skipping."
-            )
-            return
+            return spark.createDataFrame([], schema=dq_schema)
         # Fetch current table comment from the catalog
         table_info = spark.sql(
             f"DESCRIBE TABLE EXTENDED `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
@@ -1199,28 +1259,54 @@ class SuperDeltaTable:
             if str(row['col_name']).strip().lower() == 'comment':
                 current_comment = row['data_type'] if 'data_type' in row else row.get('comment', None)
                 break
-        # Compare and update if needed
-        if current_comment != self.table_description:
+        # if there is no table description, check the current table comment and log if there is a mismatch
+        if not self.table_description:
             if current_comment is not None:
+                dq_issues.append({
+                    "table_name": self.full_table_name(),
+                    "column_name": None,
+                    "issue_type": "table_comment_missing_from_structtype",
+                    "current_value": current_comment,
+                    "expected_value": None,
+                    "checked_at": now,
+                })
                 log and self.logger.warning(
-                    f"Table comment for {self.full_table_name()} is '{current_comment}' "
-                    f"but StructType description is '{self.table_description}'. Updating.")
+                    f"Table description is missing for {self.full_table_name()}, skipping."
+                )
+                return spark.createDataFrame([], schema=dq_schema)
+        else:
+            # Compare and update if needed
+            if current_comment != self.table_description:
+                dq_issues.append({
+                    "table_name": self.full_table_name(),
+                    "column_name": None,
+                    "issue_type": "table_comment_mismatch",
+                    "current_value": current_comment,
+                    "expected_value": self.table_description,
+                    "checked_at": now,
+                })
+                if current_comment is not None:
+                    log and self.logger.warning(
+                        f"Table comment for {self.full_table_name()} is '{current_comment}' "
+                        f"but StructType description is '{self.table_description}'. Updating.")
+                else:
+                    log and self.logger.info(
+                        f"Setting table comment for {self.full_table_name()} to '{self.table_description}'")
+                # Escape single quotes in the description for SQL
+                safe_description = self.table_description.replace('"', '\\"')
+                sql = (
+                    f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
+                    + 'SET TBLPROPERTIES ("comment" = "' + safe_description + '")'
+                )
+                spark.sql(sql)
+                log and self.logger.info(
+                    f"Set table comment for {self.full_table_name()}: {self.table_description}"
+                )
             else:
                 log and self.logger.info(
-                    f"Setting table comment for {self.full_table_name()} to '{self.table_description}'")
-            # Escape single quotes in the description for SQL
-            safe_description = self.table_description.replace('"', '\\"')
-            sql = (
-                f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
-                + 'SET TBLPROPERTIES ("comment" = "' + safe_description + '")'
-            )
-            spark.sql(sql)
-            log and self.logger.info(
-                f"Set table comment for {self.full_table_name()}: {self.table_description}"
-            )
-        else:
-            log and self.logger.info(
-                f"Table {self.full_table_name()} already has the correct comment.")
+                    f"Table {self.full_table_name()} already has the correct comment.")
+            dq_df = spark.createDataFrame(dq_issues, schema=dq_schema)
+            return dq_df
 
     def change_uc_table_and_columns_comments(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
