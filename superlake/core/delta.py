@@ -1158,10 +1158,10 @@ class SuperDeltaTable:
                     log and self.logger.info(
                         f"Setting comment for column `{field.name}` in {self.full_table_name()} to '{description}'")
                 # Escape single quotes in the description for SQL
-                safe_description = description.replace("'", "''")
+                safe_comment = description.replace('"', '\\"')
                 sql = (
                     f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
-                    f"CHANGE COLUMN `{field.name}` COMMENT '{safe_description}'"
+                    + 'CHANGE COLUMN `' + field.name + '` COMMENT "' + safe_comment + '"'
                 )
                 spark.sql(sql)
             else:
@@ -1209,10 +1209,10 @@ class SuperDeltaTable:
                 log and self.logger.info(
                     f"Setting table comment for {self.full_table_name()} to '{self.table_description}'")
             # Escape single quotes in the description for SQL
-            safe_description = self.table_description.replace("'", "''")
+            safe_description = self.table_description.replace('"', '\\"')
             sql = (
                 f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
-                f"SET TBLPROPERTIES ('comment' = '{safe_description}')"
+                + 'SET TBLPROPERTIES ("comment" = "' + safe_description + '")'
             )
             spark.sql(sql)
             log and self.logger.info(
