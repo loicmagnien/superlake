@@ -534,37 +534,41 @@ class SuperDeltaTable:
             # SQL-first approach: create the table with full schema,
             # generated columns, partitioning, and properties
             if self.is_unity_catalog():
-                # add generated columns in SQL (Databricks SQL syntax)
-                generated_cols_sql = ""
+                # Build the column definitions with backticks
+                column_defs = [f'`{f.name}` {f.dataType.simpleString()}' for f in effective_table_schema]
+                # Add generated columns
                 if self.generated_columns:
                     for col, expr in self.generated_columns.items():
-                        generated_cols_sql += f", {col} GENERATED ALWAYS AS ({expr}) VIRTUAL"
+                        column_defs.append(f"`{col}` GENERATED ALWAYS AS ({expr}) VIRTUAL")
+                # Add PRIMARY KEY clause if needed
+                if self.primary_keys:
+                    pk_clause = f"PRIMARY KEY ({', '.join([f'`{col}`' for col in self.primary_keys])})"
+                    column_defs.append(pk_clause)
+                # Add the partition columns if they exist
+                sql_query_partition = ""
+                if self.partition_cols:
+                    sql_query_partition = f" PARTITIONED BY ({', '.join([f'`{col}`' for col in self.partition_cols])})"
+                # Add the location if the table is external
+                sql_query_location = ""
+                if not self.managed:
+                    sql_query_location = f" LOCATION '{self.table_path}'"
+                # Add properties if needed
                 properties_sql = ""
-                # add Delta table properties if needed
                 if self.delta_properties:
                     properties_sql = " TBLPROPERTIES (" + ", ".join(
                         [f"'{k}'='{v}'" for k, v in self.delta_properties.items()]
                         ) + ")"
-                # add the partition columns if they exist
-                sql_query_partition = ""
-                if self.partition_cols:
-                    sql_query_partition = f" PARTITIONED BY ({', '.join(self.partition_cols)})"
-                # add the location if the table is external
-                sql_query_location = ""
-                if not self.managed:
-                    sql_query_location = f" LOCATION '{self.table_path}'"
-                # generate the full sql query
+                # Generate the full sql query
                 sql_query = f"""
                         CREATE TABLE IF NOT EXISTS {self.full_table_name()} (
-                            {', '.join([f'{f.name} {f.dataType.simpleString()}' for f in effective_table_schema])}
-                            {generated_cols_sql}
+                            {', '.join(column_defs)}
                         )
                         USING DELTA
                         {sql_query_partition}
                         {sql_query_location}
                         {properties_sql}
                     """
-                # execute the sql query
+                # Execute the sql query
                 spark.sql(sql_query)
                 log and self.logger.info(
                     f"Created External Delta table {self.full_table_name()} (Unity Catalog)"
