@@ -10,6 +10,7 @@ import re
 import os
 import shutil
 import time
+import hashlib
 import pyspark.sql.functions as F
 from datetime import datetime
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType
@@ -122,7 +123,8 @@ class SuperDeltaTable:
         table_path: Optional[str] = None,
         generated_columns: Optional[Dict[str, str]] = None,
         delta_properties: Optional[Dict[str, str]] = None,
-        table_description: Optional[str] = None
+        table_description: Optional[str] = None,
+        foreign_keys: Optional[list] = None  # List of dicts: {fk_columns, ref_table, ref_columns, fk_name}
     ) -> None:
         """
         Initialize a SuperDeltaTable instance.
@@ -150,6 +152,11 @@ class SuperDeltaTable:
             generated_columns (Optional[Dict[str, str]]): Generated columns and their formulas,
             e.g. {"trace_year": "YEAR(trace_dt)"}
             table_properties (Optional[Dict[str, str]]): Table properties to set.
+            foreign_keys (Optional[list]): List of dicts, each with keys:
+                - fk_columns: list of local column names
+                - ref_table: fully qualified referenced table name
+                - ref_columns: list of referenced column names
+                - fk_name: (optional) constraint name, will be auto-generated if not provided
         """
         self.super_spark = super_spark
         self.spark = self.super_spark.spark
@@ -179,6 +186,7 @@ class SuperDeltaTable:
         self.generated_columns = generated_columns or {}
         self.delta_properties = delta_properties or {}
         self.table_description = table_description
+        self.foreign_keys = foreign_keys or []
 
     def is_unity_catalog(self):
         """
@@ -346,8 +354,28 @@ class SuperDeltaTable:
         """
         if spark is None:
             spark = self.spark
-        db_names = [db.name.strip('`') for db in spark.catalog.listDatabases()]
-        return self.schema_name in db_names
+
+        if self.is_unity_catalog():
+            # Unity Catalog: check in the correct catalog
+            catalog = self.catalog_name or self.super_spark.catalog_name
+            # Use SQL to get schemas in the catalog
+            schemas = spark.sql(f"SHOW DATABASES IN `{catalog}`").toPandas()["databaseName"].tolist()
+            return self.schema_name in schemas
+        else:
+            # Legacy/OSS: use Spark catalog API
+            db_names = [db.name.strip('`') for db in spark.catalog.listDatabases()]
+            return self.schema_name in db_names
+
+    def data_exists(self, spark: Optional[SparkSession] = None) -> bool:
+        """
+        Checks if the data is present in the storage for managed or external tables.
+        args:
+            spark (SparkSession): The Spark session.
+        returns:
+            bool: True if the data exists, False otherwise.
+        """
+        table_path = self.get_table_path(spark)
+        return os.path.exists(table_path) and bool(os.listdir(table_path))
 
     def table_exists(self, spark: Optional[SparkSession] = None) -> bool:
         """
@@ -362,9 +390,21 @@ class SuperDeltaTable:
         # managed tables
         if self.managed:
             if self.is_unity_catalog():
+                # check if the schema exists
                 catalog_name = self.catalog_name or self.super_spark.catalog_name
-                tables_in_catalog = spark.sql(f"SHOW TABLES IN {catalog_name}.{self.schema_name}").toPandas()
-                return (tables_in_catalog['tableName'] == self.table_name).any()
+                schemas_in_catalog = spark.sql(
+                    f"SHOW DATABASES IN {catalog_name}"
+                    ).toPandas()["databaseName"].tolist()
+                if self.schema_name not in schemas_in_catalog:
+                    return False
+                else:
+                    # check if the table exists
+                    tables_in_catalog = spark.sql(
+                        f"SHOW TABLES IN {catalog_name}.{self.schema_name}"
+                        ).toPandas()["tableName"].tolist()
+                    if self.table_name not in tables_in_catalog:
+                        return False
+                    return True
             else:
                 # get normalised schema names by stripping backticks
                 schemas_in_catalog = [db.name.strip('`') for db in spark.catalog.listDatabases()]
@@ -376,17 +416,6 @@ class SuperDeltaTable:
         # external tables
         else:
             return self.is_delta_table_path(spark)
-
-    def data_exists(self, spark: Optional[SparkSession] = None) -> bool:
-        """
-        Checks if the data is present in the storage for managed or external tables.
-        args:
-            spark (SparkSession): The Spark session.
-        returns:
-            bool: True if the data exists, False otherwise.
-        """
-        table_path = self.get_table_path(spark)
-        return os.path.exists(table_path) and bool(os.listdir(table_path))
 
     def schema_and_table_exists(self, spark: Optional[SparkSession] = None) -> bool:
         """
@@ -410,10 +439,12 @@ class SuperDeltaTable:
         """
         if spark is None:
             spark = self.spark
+        # adapts the schema name to the catalog name if it exists
         if self.catalog_name:
             schema_qualified = f"{self.catalog_name}.{self.schema_name}"
         else:
             schema_qualified = self.schema_name
+        # create the schema in the catalog
         spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema_qualified}")
 
     def register_table_in_catalog(self, spark: Optional[SparkSession] = None, log=True):
@@ -429,15 +460,19 @@ class SuperDeltaTable:
         """
         if spark is None:
             spark = self.spark
-        # Ensure schema exists with catalog support
-        self.ensure_schema_exists(spark)
-        # get the table path
-        table_path = self.get_table_path(spark)
-        # create the table in the catalog
-        spark.sql(f"CREATE TABLE IF NOT EXISTS {self.full_table_name()} USING DELTA LOCATION '{table_path}'")
-        log and self.logger.info(
-            f"Registered {'managed' if self.managed else 'external'} Delta table {self.full_table_name()}"
-        )
+        # Registering a managed table in the catalog is not supported for Unity Catalog
+        if self.is_unity_catalog() and self.managed:
+            log and self.logger.info("register_table_in_catalog is only supported for external tables.")
+        else:
+            # Ensure schema exists with catalog support
+            self.ensure_schema_exists(spark)
+            # get the table path
+            table_path = self.get_table_path(spark)
+            # create the table in the catalog
+            spark.sql(f"CREATE TABLE IF NOT EXISTS {self.full_table_name()} USING DELTA LOCATION '{table_path}'")
+            log and self.logger.info(
+                f"Registered {'managed' if self.managed else 'external'} Delta table {self.full_table_name()}"
+            )
 
     def alter_catalog_table_schema(self, spark: Optional[SparkSession] = None, log=True):
         """
@@ -471,12 +506,387 @@ class SuperDeltaTable:
             if not missing_cols:
                 log and self.logger.info(f"No schema changes needed for {self.full_table_name()}.")
                 return
+            # Add columns to the table
             for name, dtype in missing_cols:
                 log and self.logger.info(f"Altering table {self.full_table_name()}: adding column {name} {dtype}")
                 spark.sql(f"ALTER TABLE {self.full_table_name()} ADD COLUMNS ({name} {dtype})")
             log and self.logger.info(
                 f"Schema of {self.full_table_name()} updated to match Delta table at {self.table_path}."
             )
+
+    def create_uc_table_foreign_keys(
+            self,
+            force_create: bool = False,
+            foreign_keys: Optional[list] = None,
+            spark: Optional[SparkSession] = None,
+            log: bool = True
+            ):
+        """
+        For Unity Catalog tables, add foreign key constraints after table creation using ALTER TABLE ... ADD CONSTRAINT ...
+        Also performs quality checks and returns a DQ DataFrame of FK issues.
+        Args:
+            spark: SparkSession
+            foreign_keys: List of dicts with keys: fk_columns, ref_table, ref_columns, fk_name
+        Returns:
+            DataFrame of FK issues (DQ style)
+        """
+        dq_schema = StructType([
+            StructField("table_name", StringType(), True),
+            StructField("column_name", StringType(), True),
+            StructField("check_key", StringType(), True),
+            StructField("check_value", StringType(), True),
+            StructField("check_dt", TimestampType(), True),
+        ])
+        if spark is None:
+            spark = self.spark
+        # if not Unity Catalog, return an empty dataframe
+        if not self.is_unity_catalog():
+            self.logger.error(f"create_uc_table_foreign_keys is only supported for Unity Catalog tables, "
+                              f"not for {self.full_table_name()}.")
+            return spark.createDataFrame([], dq_schema)
+        else:
+            if foreign_keys is None:
+                foreign_keys = self.foreign_keys
+            now = datetime.now()
+            fk_issues = []
+            valid_foreign_keys = []
+            # local function to check if the referenced table exists
+            def referenced_table_exists(spark, ref_table):
+                try:
+                    spark.table(ref_table)
+                    return True
+                except Exception:
+                    return False
+
+            # local function to check if the referenced columns exist in the referenced table
+            def referenced_columns_exist(spark, ref_table, ref_columns):
+                try:
+                    df = spark.table(ref_table)
+                    table_columns = set(df.columns)
+                    return all(col in table_columns for col in ref_columns)
+                except Exception:
+                    return False
+
+            # local function to check if the referenced columns are primary key or unique
+            def referenced_columns_are_pk_or_unique(spark, ref_table, ref_columns):
+                try:
+                    desc = spark.sql(f"DESCRIBE TABLE EXTENDED {ref_table}").collect()
+                    found = False
+                    for row in desc:
+                        dtype = getattr(row, 'data_type', '').strip().upper()
+                        if dtype.startswith("PRIMARY KEY") or dtype.startswith("UNIQUE"):
+                            match = re.search(r"\((.*?)\)", dtype)
+                            if match:
+                                # Remove backticks, spaces, and lowercase for comparison
+                                constraint_cols = [c.replace('`', '').strip().lower() for c in match.group(1).split(',')]
+                                ref_cols_norm = [c.replace('`', '').strip().lower() for c in ref_columns]
+                                if set(ref_cols_norm) == set(constraint_cols):
+                                    found = True
+                                    break
+                    return found
+                except Exception as e:
+                    self.logger.warning(f"Error parsing constraints: {e}")
+                    return False
+
+            # local function to check if the constraint already exists
+            def constraint_exists(spark, table, constraint_name):
+                desc = spark.sql(f"DESCRIBE TABLE EXTENDED {table}").collect()
+                in_constraints = False
+                for row in desc:
+                    if getattr(row, 'col_name', '').strip().lower() == "# constraints":
+                        in_constraints = True
+                        continue
+                    if in_constraints:
+                        if not getattr(row, 'col_name', '').strip() or getattr(row, 'col_name', '').strip().startswith("#"):
+                            break
+                        if getattr(row, 'col_name', '').strip() == constraint_name:
+                            return True
+                return False
+
+            # iterate over the foreign keys
+            for fk in foreign_keys:
+                fk_columns = fk["fk_columns"]
+                ref_table = fk["ref_table"]
+                ref_columns = fk["ref_columns"]
+                fk_name = fk.get("fk_name")
+                # generate the name if not provided
+                if not fk_name:
+                    def clean(name):
+                        return re.sub(r'[^a-zA-Z0-9_]', '_', name)
+                    local_parts = self.full_table_name().split('.')
+                    ref_parts = ref_table.split('.')
+                    localschema = clean(local_parts[-2])
+                    localtable = clean(local_parts[-1]) if len(local_parts) > 1 else clean(local_parts[-1])
+                    refschema = clean(ref_parts[-2])
+                    reftable = clean(ref_parts[-1]) if len(ref_parts) > 1 else clean(ref_parts[-1])
+                    localcols = '__'.join([clean(col) for col in fk_columns])
+                    refcols = '__'.join([clean(col) for col in ref_columns])
+                    name = (
+                        f"fk__{localschema}__{localtable}__{localcols}__to__{refschema}__{reftable}__{refcols}"
+                    )
+                    # if the name is too long, hash it to shorten it
+                    if len(name) > 255:
+                        hash_part = hashlib.md5(name.encode()).hexdigest()[:8]
+                        name = (
+                            f"fk__{localschema}__{localtable}__to__{refschema}__{reftable}__{hash_part}"
+                        )
+                    fk_name = name
+                # check if the referenced table exists
+                if not referenced_table_exists(spark, ref_table):
+                    self.logger.error(
+                        f"Foreign key skipped: Referenced table {ref_table} does not exist for FK columns {fk_columns}."
+                    )
+                    fk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": ','.join(fk_columns),
+                        "check_key": "fk_missing_table",
+                        "check_value": ref_table,
+                        "check_dt": now,
+                    })
+                    continue
+                # check if the referenced columns exist in the referenced table
+                if not referenced_columns_exist(spark, ref_table, ref_columns):
+                    self.logger.error(
+                        f"Foreign key skipped: One or more referenced columns {ref_columns} do not exist in "
+                        f"{ref_table} for FK columns {fk_columns}."
+                    )
+                    fk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": ','.join(fk_columns),
+                        "check_key": "fk_missing_column",
+                        "check_value": ','.join(ref_columns),
+                        "check_dt": now,
+                    })
+                    continue
+                # check if the referenced columns are primary key or unique
+                if not referenced_columns_are_pk_or_unique(spark, ref_table, ref_columns):
+                    self.logger.error(
+                        f"Foreign key skipped: Referenced columns {ref_columns} in {ref_table} are not primary key or unique."
+                    )
+                    fk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": ','.join(fk_columns),
+                        "check_key": "fk_ref_not_pk_or_unique",
+                        "check_value": ','.join(ref_columns) + " is not primary key or unique",
+                        "check_dt": now,
+                    })
+                    continue
+                # save valid FK for creation
+                valid_foreign_keys.append({
+                    "fk_columns": fk_columns,
+                    "ref_table": ref_table,
+                    "ref_columns": ref_columns,
+                    "fk_name": fk_name
+                })
+            # actually create the valid FKs
+            for fk in valid_foreign_keys:
+                fk_columns = fk["fk_columns"]
+                ref_table = fk["ref_table"]
+                ref_columns = fk["ref_columns"]
+                fk_name = fk["fk_name"]
+                local_cols_str = ', '.join([f'`{col}`' for col in fk_columns])
+                ref_cols_str = ', '.join([f'`{col}`' for col in ref_columns])
+                sql_alter_table_fk = (
+                    f"ALTER TABLE {self.full_table_name()} "
+                    f"ADD CONSTRAINT {fk_name} FOREIGN KEY ({local_cols_str}) "
+                    f"REFERENCES {ref_table} ({ref_cols_str})"
+                )
+                # check if the constraint already exists
+                if constraint_exists(spark, self.full_table_name(), fk_name):
+                    if force_create:
+                        self.logger.warning(f"Constraint {fk_name} already exists on {self.full_table_name()} "
+                                            "and force_create is True, dropping it.")
+                        spark.sql(f"ALTER TABLE {self.full_table_name()} DROP CONSTRAINT {fk_name}")
+                    else:
+                        self.logger.warning(f"Constraint {fk_name} already exists on {self.full_table_name()} "
+                                            "and force_create is False, skipping it.")
+                        fk_issues.append({
+                            "table_name": self.full_table_name(),
+                            "column_name": ','.join(fk_columns),
+                            "check_key": "fk_already_exists",
+                            "check_value": fk_name,
+                            "check_dt": now,
+                        })
+                        continue
+                spark.sql(sql_alter_table_fk)
+                self.logger.info(f"Added foreign key constraint {fk_name} to {self.full_table_name()}")
+            # return the issues or an empty dataframe
+            if fk_issues:
+                fk_issues_df = spark.createDataFrame(fk_issues, schema=dq_schema)
+            else:
+                fk_issues_df = spark.createDataFrame([], schema=dq_schema)
+            return fk_issues_df
+
+    def create_uc_table_primary_keys(
+            self,
+            force_create: bool = False,
+            primary_keys: Optional[list] = None,
+            spark: Optional[SparkSession] = None
+            ) -> DataFrame:
+        """
+        For Unity Catalog tables, add a primary key constraint after table creation using
+        ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY (...).
+        Also performs quality checks and returns a DQ DataFrame of PK issues.
+        Args:
+            spark: SparkSession
+            primary_keys: List of column names (or None to use self.primary_keys)
+            force_create: If True, drop existing PK constraint before creating
+        Returns:
+            DataFrame of PK issues (DQ style)
+        """
+        dq_schema = StructType([
+            StructField("table_name", StringType(), True),
+            StructField("column_name", StringType(), True),
+            StructField("check_key", StringType(), True),
+            StructField("check_value", StringType(), True),
+            StructField("check_dt", TimestampType(), True),
+        ])
+        if spark is None:
+            spark = self.spark
+        if not self.is_unity_catalog():
+            self.logger.error(f"create_uc_table_primary_keys is only supported for Unity Catalog tables, "
+                              f"not for {self.full_table_name()}.")
+            return spark.createDataFrame([], dq_schema)
+        else:
+            # if no primary keys are provided, use the ones from the table definition
+            if primary_keys is None:
+                primary_keys = self.primary_keys
+            # get the current date and time and initialize the issues list
+            now = datetime.now()
+            pk_issues = []
+            # retrieve the schema of the table to check if the columns are nullable
+            try:
+                schema = spark.table(self.full_table_name()).schema
+            except Exception as e:
+                self.logger.error(f"Could not retrieve schema for {self.full_table_name()}: {e}")
+                for col in primary_keys:
+                    pk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": col,
+                        "check_key": "pk_schema_unavailable",
+                        "check_value": None,
+                        "check_dt": now,
+                    })
+                pk_issues_df = spark.createDataFrame(pk_issues, schema=dq_schema)
+                return pk_issues_df
+            schema_fields = {field.name: field for field in schema.fields}
+            for col in primary_keys:
+                if col not in schema_fields:
+                    self.logger.error(f"Primary key column {col} does not exist in {self.full_table_name()}")
+                    pk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": col,
+                        "check_key": "pk_missing_column",
+                        "check_value": None,
+                        "check_dt": now,
+                    })
+                # check if the column is nullable and making it NOT NULL if force_create is True
+                elif schema_fields[col].nullable:
+                    if force_create:
+                        self.logger.warning(
+                            f"Primary key column {col} is nullable in {self.full_table_name()}, "
+                            "force_create is True, altering to NOT NULL.")
+                        try:
+                            spark.sql(f"ALTER TABLE {self.full_table_name()} ALTER COLUMN {col} SET NOT NULL")
+                        except Exception as e:
+                            self.logger.error(f"Failed to alter column {col} to NOT NULL: {e}")
+                            pk_issues.append({
+                                "table_name": self.full_table_name(),
+                                "column_name": col,
+                                "check_key": "pk_column_nullable_alter_failed",
+                                "check_value": f"The primary key column {col} is nullable",
+                                "check_dt": now,
+                            })
+                    else:
+                        self.logger.error(f"Primary key column {col} is nullable in {self.full_table_name()}")
+                        pk_issues.append({
+                            "table_name": self.full_table_name(),
+                            "column_name": col,
+                            "check_key": "pk_column_nullable",
+                            "check_value": f"The primary key column {col} is nullable",
+                            "check_dt": now,
+                        })
+            # check if the primary key already exists
+            desc_ext = spark.sql(f"DESCRIBE TABLE EXTENDED {self.full_table_name()}").collect()
+            pk_constraint_name = None
+            pk_exists = False
+            in_constraints = False
+            for row in desc_ext:
+                if getattr(row, 'col_name', '').strip().lower() == "# constraints":
+                    in_constraints = True
+                    continue
+                if in_constraints:
+                    if not getattr(row, 'col_name', '').strip() or getattr(row, 'col_name', '').strip().startswith("#"):
+                        break
+                    dtype = getattr(row, 'data_type', '').strip().upper()
+                    if dtype.startswith("PRIMARY KEY"):
+                        pk_constraint_name = getattr(row, 'col_name', '').strip()
+                        pk_exists = True
+                        break
+            # if the primary key already exists, check if it should be dropped and recreated if force_create is True
+            if pk_exists:
+                if force_create:
+                    self.logger.warning(
+                        f"Primary key constraint {pk_constraint_name} already exists on {self.full_table_name()}"
+                        " and force_create is True, dropping it with CASCADE."
+                    )
+                    try:
+                        spark.sql(f"ALTER TABLE {self.full_table_name()} DROP CONSTRAINT {pk_constraint_name} CASCADE")
+                    except Exception as e:
+                        self.logger.error(f"Failed to drop PK constraint {pk_constraint_name} with CASCADE: {e}")
+                        pk_issues.append({
+                            "table_name": self.full_table_name(),
+                            "column_name": ','.join(primary_keys),
+                            "check_key": "pk_drop_failed",
+                            "check_value": pk_constraint_name,
+                            "check_dt": now,
+                        })
+                        pk_issues_df = spark.createDataFrame(pk_issues, schema=dq_schema)
+                        return pk_issues_df
+                else:
+                    self.logger.warning(
+                        f"Primary key constraint {pk_constraint_name} already exists on {self.full_table_name()} "
+                        "and force_create is False, skipping it.")
+                    pk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": ','.join(primary_keys),
+                        "check_key": "pk_already_exists",
+                        "check_value": pk_constraint_name,
+                        "check_dt": now,
+                    })
+                    pk_issues_df = spark.createDataFrame(pk_issues, schema=dq_schema)
+                    return pk_issues_df
+            # if no issues, add the primary key
+            if not pk_issues:
+                # include schema and table name in the PK constraint name for uniqueness and clarity
+                pk_name = f"pk__{self.schema_name}__{self.table_name}__{'__'.join(primary_keys)}"
+                pk_cols_str = ', '.join([f'`{col}`' for col in primary_keys])
+                sql_alter_table_pk = (
+                    f"ALTER TABLE {self.full_table_name()} "
+                    f"ADD CONSTRAINT {pk_name} PRIMARY KEY ({pk_cols_str})"
+                )
+                try:
+                    spark.sql(sql_alter_table_pk)
+                    self.logger.info(
+                        f"Added primary key constraint {pk_name} to {self.full_table_name()}"
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to add primary key constraint {pk_name}: {e}"
+                    )
+                    pk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": ','.join(primary_keys),
+                        "check_key": "pk_add_failed",
+                        "check_value": pk_name,
+                        "check_dt": now,
+                    })
+            # return the issues or an empty dataframe
+            if pk_issues:
+                pk_issues_df = spark.createDataFrame(pk_issues, schema=dq_schema)
+            else:
+                pk_issues_df = spark.createDataFrame([], schema=dq_schema)
+            return pk_issues_df
 
     def ensure_table_exists(self, spark: Optional[SparkSession] = None, log=True):
         """
@@ -531,8 +941,7 @@ class SuperDeltaTable:
             return
         else:
             # --- UNITY CATALOG ---
-            # SQL-first approach: create the table with full schema,
-            # generated columns, partitioning, and properties
+            # SQL-first approach: create the table with full schema, generated columns, partitioning, and properties
             if self.is_unity_catalog():
                 # Build the column definitions with backticks
                 column_defs = [f'`{f.name}` {f.dataType.simpleString()}' for f in effective_table_schema]
@@ -540,15 +949,11 @@ class SuperDeltaTable:
                 if self.generated_columns:
                     for col, expr in self.generated_columns.items():
                         column_defs.append(f"`{col}` GENERATED ALWAYS AS ({expr}) VIRTUAL")
-                # Add PRIMARY KEY clause if needed
-                if self.primary_keys:
-                    pk_clause = f"PRIMARY KEY ({', '.join([f'`{col}`' for col in self.primary_keys])})"
-                    column_defs.append(pk_clause)
                 # Add the partition columns if they exist
                 sql_query_partition = ""
                 if self.partition_cols:
                     sql_query_partition = f" PARTITIONED BY ({', '.join([f'`{col}`' for col in self.partition_cols])})"
-                # Add the location if the table is external
+                # managed vs external: add the location if the table is external
                 sql_query_location = ""
                 if not self.managed:
                     sql_query_location = f" LOCATION '{self.table_path}'"
@@ -571,17 +976,15 @@ class SuperDeltaTable:
                 # Execute the sql query
                 spark.sql(sql_query)
                 log and self.logger.info(
-                    f"Created External Delta table {self.full_table_name()} (Unity Catalog)"
+                    f"Created {'managed' if self.managed else 'external'} Delta table {self.full_table_name()} (Unity Catalog)"
                 )
                 # For external tables, data should be written to the table after creation, not before
                 if not self.managed:
                     empty_df = spark.createDataFrame([], effective_table_schema)
                     mode = "overwrite" if self.table_save_mode == TableSaveMode.Overwrite else "append"
                     empty_df.write.format("delta").mode(mode).save(self.table_path)
-                return
             # --- LEGACY/OSS METASTORES ---
-            # Use DeltaTableBuilder for full feature support
-            # for generated columns, partitioning, and properties
+            # Use DeltaTableBuilder for full feature support for generated columns, partitioning, and properties
             else:
                 # managed tables
                 if self.managed:
@@ -618,7 +1021,6 @@ class SuperDeltaTable:
                         abs_path = os.path.abspath(self.table_path)
                         empty_df = spark.createDataFrame([], effective_table_schema)
                         builder = DeltaTable.createIfNotExists(spark)
-                        # TODO: catalog.schema.table or schema.table ?
                         table_qualified = f"{self.schema_name}.{self.table_name}"
                         builder = builder.tableName(table_qualified)
                         for field in effective_table_schema:
@@ -643,8 +1045,12 @@ class SuperDeltaTable:
                         log and self.logger.info(
                             f"Created External Delta table {self.full_table_name()}."
                         )
-                # Register the table in the catalog (for both managed and external)
-                self.register_table_in_catalog(spark, log=log)
+                    # Register the table in the catalog (for both managed and external)
+                    self.register_table_in_catalog(spark, log=log)
+                    # DEBUG: Ensure the path is initialized as a Delta table
+                    empty_df = spark.createDataFrame([], effective_table_schema)
+                    mode = "overwrite" if self.table_save_mode == TableSaveMode.Overwrite else "append"
+                    empty_df.write.format("delta").mode(mode).save(self.table_path)
 
     def optimize(self, spark: Optional[SparkSession] = None):
         """
@@ -740,7 +1146,10 @@ class SuperDeltaTable:
         if self.managed:
             return spark.read.table(self.full_table_name())
         else:
-            return self.spark.read.format("delta").load(self.table_path)
+            if not self.is_delta_table_path(spark):
+                # This case could happen if the table has been created via ensure_table_exists
+                return spark.createDataFrame([], self.table_schema)
+            return spark.read.format("delta").load(self.table_path)
 
     def evolve_schema_if_needed(self, df, spark: Optional[SparkSession] = None):
         """Evolve the Delta table schema to match the DataFrame if schema_evolution_option is Merge.
@@ -753,20 +1162,25 @@ class SuperDeltaTable:
         if spark is None:
             spark = self.spark
         if self.schema_evolution_option == SchemaEvolution.Merge:
-            # get current table columns and compare to new DataFrame columns
-            if self.table_exists(spark):
-                if self.managed:
-                    current_cols = set(spark.read.table(self.full_table_name()).columns)
-                else:
-                    current_cols = set(spark.read.format("delta").load(self.table_path).columns)
+
+            def normalize(col):
+                return col.replace('`', '').strip().lower()
+
+            if not self.table_exists(spark):
+                self.logger.info(f"Table {self.full_table_name()} does not exist yet, skipping schema evolution.")
+                return
             else:
-                current_cols = set()
-            new_cols = set(df.columns) - current_cols
-            # If there are new columns, modify the delta table schema at location
-            if new_cols:
-                # extra step for unity catalog and external tables: use ALTER TABLE to add columns in the catalog
+                if self.managed:
+                    table_fields = spark.read.table(self.full_table_name()).schema.fields
+                else:
+                    table_fields = spark.read.format("delta").load(self.table_path).schema.fields
+                table_field_names = set(normalize(f.name) for f in table_fields)
+            # Only add columns that are not already present (normalized)
+            new_fields = [f for f in df.schema.fields if normalize(f.name) not in table_field_names]
+            if new_fields:
                 if self.is_unity_catalog() and not self.managed:
-                    columns_str = ', '.join([f'{col} {df.schema[col].dataType.simpleString()}' for col in new_cols])
+                    columns_str = ', '.join([f'`{f.name}` {f.dataType.simpleString()}' for f in new_fields])
+                    self.logger.info(f"Attempting to add columns: {[f.name for f in new_fields]}")
                     spark.sql(
                         f"ALTER TABLE {self.full_table_name()} "
                         f"ADD COLUMNS ({columns_str})"
@@ -779,6 +1193,8 @@ class SuperDeltaTable:
                     writer.saveAsTable(self.full_table_name())
                 else:
                     writer.save(self.table_path)
+            else:
+                self.logger.info(f"No new columns to add for {self.full_table_name()}. Skipping ALTER TABLE.")
 
     def align_df_to_table_schema(self, df, spark: Optional[SparkSession] = None):
         """
@@ -870,17 +1286,22 @@ class SuperDeltaTable:
         """
         if spark is None:
             spark = self.spark
+        # align the schema of the dataframe to the table schema
         if merge_schema:
             df = self.align_df_to_table_schema(df, spark)
+        # create the writer
         writer = df.write.format("delta").mode(mode)
+        # add the partition columns if they exist
         if self.partition_cols:
             writer = writer.partitionBy(self.partition_cols)
+        # add the merge or overwrite schema option if needed
         if merge_schema:
             writer = writer.option("mergeSchema", "true")
         if overwrite_schema:
             writer = writer.option("overwriteSchema", "true")
+        # save the dataframe
         if self.managed:
-            writer.saveAsTable(self.forname_table_name())  # was full_table_name()
+            writer.saveAsTable(self.forname_table_name())  # note: this used to be full_table_name()
         else:
             writer.save(self.table_path)
 
@@ -909,7 +1330,9 @@ class SuperDeltaTable:
         """
         if spark is None:
             spark = self.spark
+        # evolve the schema of the table to match the dataframe
         self.evolve_schema_if_needed(df, spark)
+        # retrieve the conditions for merge and execute the merge
         delta_table = self.get_delta_table(spark)
         cond, updates, _ = self.get_merge_condition_and_updates(df)
         delta_table.alias("target").merge(
@@ -992,6 +1415,7 @@ class SuperDeltaTable:
             df = self.align_df_to_table_schema(df, spark)
             self.merge(df, spark)
         elif mode == 'append':
+            # append the dataframe to the table
             df = self.align_df_to_table_schema(df, spark)
             self.evolve_schema_if_needed(df, spark)
             self.write_df(
@@ -1000,6 +1424,7 @@ class SuperDeltaTable:
                 merge_schema=(self.schema_evolution_option == SchemaEvolution.Merge)
             )
         elif mode == 'overwrite':
+            # overwrite the table with the dataframe
             df = self.align_df_to_table_schema(df, spark)
             self.evolve_schema_if_needed(df, spark)
             self.write_df(
@@ -1130,100 +1555,101 @@ class SuperDeltaTable:
         Returns:
             None
         """
-        # Define the schema for the DQ issues DataFrame
         dq_schema = StructType([
-                StructField("table_name", StringType(), False),
-                StructField("column_name", StringType(), False),
-                StructField("issue_type", StringType(), False),
-                StructField("current_value", StringType(), True),
-                StructField("expected_value", StringType(), True),
-                StructField("checked_at", TimestampType(), False),
-            ])
-        dq_issues = []
-        now = datetime.now()
+            StructField("table_name", StringType(), True),
+            StructField("column_name", StringType(), True),
+            StructField("check_key", StringType(), True),
+            StructField("check_value", StringType(), True),
+            StructField("check_dt", TimestampType(), True),
+        ])
         if spark is None:
             spark = self.spark
         if not self.is_unity_catalog():
-            log and self.logger.info(
-                f"change_uc_columns_comments: Not a Unity Catalog table, skipping for {self.full_table_name()}.")
-            return
-        # Fetch current column comments from the catalog
-        columns_info = spark.sql(
-            f"DESCRIBE TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
-        ).toPandas()
-        # Build a dict: column_name -> current_comment
-        current_comments = {}
-        for _, row in columns_info.iterrows():
-            col_name = row['col_name']
-            comment = row['comment'] if 'comment' in row and row['comment'] is not None else None
-            if col_name and not col_name.startswith('#'):
-                current_comments[col_name] = comment
-
-        def set_column_comment(col_name: str, description: str, current_comment: str = None):
-            if current_comment != description:
-                dq_issues.append({
-                    "table_name": self.full_table_name(),
-                    "column_name": col_name,
-                    "issue_type": "column_comment_mismatch",
-                    "current_value": current_comment,
-                    "expected_value": description,
-                    "checked_at": now,
-                })
-                log and self.logger.warning(
-                    f"Column `{col_name}` in {self.full_table_name()} has comment '{current_comment}' "
-                    f"which differs from StructType description '{description}'. Updating.")
-                safe_comment = description.replace('"', '\\"')
-                sql = (
-                    f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
-                    + 'CHANGE COLUMN `' + col_name + '` COMMENT "' + safe_comment + '"'
-                )
-                spark.sql(sql)
-            else:
-                log and self.logger.info(f"Column `{col_name}` in {self.full_table_name()} already has the correct comment '{current_comment}'")
-
-        # Prepare the list of fields to iterate over, including SCD columns if needed
-        fields = list(self.table_schema.fields)
-        if self.table_save_mode == TableSaveMode.MergeSCD:
-            scd_fields = {
-                'scd_start_dt': (T.TimestampType(), 'SCD2 Record validity start date'),
-                'scd_end_dt': (T.TimestampType(), 'SCD2 Record validity end date'),
-                'scd_is_current': (T.BooleanType(), 'SCD2 Flag for current record version'),
-            }
-            existing_field_names = {f.name for f in fields}
-            for name, (dtype, desc) in scd_fields.items():
-                if name not in existing_field_names:
-                    fields.append(T.StructField(name, dtype, True, {'description': desc}))
-
-        # Log warning for columns in the real table but not in the StructType
-        structtype_field_names = {f.name for f in fields}
-        for col_name in current_comments:
-            if col_name not in structtype_field_names:
-                dq_issues.append({
-                    "table_name": self.full_table_name(),
-                    "column_name": col_name,
-                    "issue_type": "column_missing_from_structtype",
-                    "current_value": current_comments[col_name],
-                    "expected_value": None,
-                    "checked_at": now,
-                })
-                log and self.logger.warning(
-                    f"Column `{col_name}` exists in the table {self.full_table_name()} but not in the StructType.")
-
-        # Update comments for columns in the schema (including SCD columns if needed)
-        for field in fields:
-            description = None
-            if hasattr(field, 'metadata') and field.metadata and 'description' in field.metadata:
-                description = field.metadata['description']
-            if description:
-                current_comment = current_comments.get(field.name)
-                set_column_comment(field.name, description, current_comment)
-
-        # Return a DataFrame of DQ issues if any, else None
-        if dq_issues:
-            dq_df = spark.createDataFrame(dq_issues, schema=dq_schema)
-            return dq_df
+            self.logger.error(f"change_uc_columns_comments is only supported for Unity Catalog tables, "
+                              f"not for {self.full_table_name()}.")
+            return spark.createDataFrame([], dq_schema)
         else:
-            return spark.createDataFrame([], schema=dq_schema)
+            # Define the schema for the DQ issues DataFrame
+            dq_issues = []
+            now = datetime.now()
+            # Fetch current column comments from the catalog
+            columns_info = spark.sql(
+                f"DESCRIBE TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
+            ).toPandas()
+            # Build a dict: column_name -> current_comment
+            current_comments = {}
+            for _, row in columns_info.iterrows():
+                col_name = row['col_name']
+                comment = row['comment'] if 'comment' in row and row['comment'] is not None else None
+                if col_name and not col_name.startswith('#'):
+                    current_comments[col_name] = comment
+
+            # Prepare the list of fields to iterate over, including SCD columns if needed
+            fields = list(self.table_schema.fields)
+            if self.table_save_mode == TableSaveMode.MergeSCD:
+                scd_fields = {
+                    'scd_start_dt': (T.TimestampType(), 'SCD2 Record validity start date'),
+                    'scd_end_dt': (T.TimestampType(), 'SCD2 Record validity end date'),
+                    'scd_is_current': (T.BooleanType(), 'SCD2 Flag for current record version'),
+                }
+                existing_field_names = {f.name for f in fields}
+                for name, (dtype, desc) in scd_fields.items():
+                    if name not in existing_field_names:
+                        fields.append(T.StructField(name, dtype, True, {'description': desc}))
+
+            # Log warning for columns in the real table but not in the StructType
+            structtype_field_names = {f.name for f in fields}
+            for col_name in current_comments:
+                # Flag issues for columns in the table but not in the StructType
+                comment_val = current_comments[col_name]
+                if col_name not in structtype_field_names:
+                    dq_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": col_name,
+                        "check_key": "column_missing_from_structtype",
+                        "check_value": comment_val,
+                        "check_dt": now,
+                    })
+                    log and self.logger.warning(
+                        f"Column `{col_name}` exists in the table {self.full_table_name()} "
+                        "but not in the StructType and has a non-empty comment.")
+
+            # Update comments for columns in the schema (including SCD columns if needed)
+            for field in fields:
+                description = None
+                if hasattr(field, 'metadata') and field.metadata and 'description' in field.metadata:
+                    description = field.metadata['description']
+                if description:
+                    current_comment = current_comments.get(field.name)
+                    if current_comment != description:
+                        # Only flag as an issue if the current comment is not empty (None or empty string)
+                        if current_comment not in (None, ""):
+                            dq_issues.append({
+                                "table_name": self.full_table_name(),
+                                "column_name": field.name,
+                                "check_key": "column_comment_mismatch",
+                                "check_value": f"The column {field.name} has comment [{current_comment}] "
+                                f"which differs from StructType description [{description}]",
+                                "check_dt": now,
+                            })
+                        log and self.logger.warning(
+                            f"Column `{field.name}` in {self.full_table_name()} has comment '{current_comment}' "
+                            f"which differs from StructType description '{description}'. Updating.")
+                        safe_comment = description.replace('"', '\\"')
+                        sql = (
+                            f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
+                            + 'CHANGE COLUMN `' + field.name + '` COMMENT "' + safe_comment + '"'
+                        )
+                        spark.sql(sql)
+                    else:
+                        log and self.logger.info(f"Column `{field.name}` in {self.full_table_name()} already has the correct comment '{current_comment}'")
+
+            # Return a DataFrame of DQ issues if any, else None
+            if dq_issues:
+                dq_df = spark.createDataFrame(dq_issues, schema=dq_schema)
+                return dq_df
+            else:
+                return spark.createDataFrame([], schema=dq_schema)
 
     def change_uc_table_comment(self, log: bool = True, spark: Optional[SparkSession] = None):
         """
@@ -1237,94 +1663,193 @@ class SuperDeltaTable:
         """
         # Define the schema for the DQ issues DataFrame
         dq_schema = StructType([
-            StructField("table_name", StringType(), False),
-            StructField("column_name", StringType(), False),
-            StructField("issue_type", StringType(), False),
-            StructField("current_value", StringType(), True),
-            StructField("expected_value", StringType(), True),
-            StructField("checked_at", TimestampType(), False),
+            StructField("table_name", StringType(), True),
+            StructField("column_name", StringType(), True),
+            StructField("check_key", StringType(), True),
+            StructField("check_value", StringType(), True),
+            StructField("check_dt", TimestampType(), True),
         ])
-        dq_issues = []
-        now = datetime.now()
         if spark is None:
             spark = self.spark
         if not self.is_unity_catalog():
-            log and self.logger.info(
-                f"change_uc_table_comment: Not a Unity Catalog table, skipping for {self.full_table_name()}."
-            )
-            return spark.createDataFrame([], schema=dq_schema)
-        # Fetch current table comment from the catalog
-        table_info = spark.sql(
-            f"DESCRIBE TABLE EXTENDED `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
-        ).toPandas()
-        # Find the row with col_name == 'Comment'
-        current_comment = None
-        for _, row in table_info.iterrows():
-            if str(row['col_name']).strip().lower() == 'comment':
-                current_comment = row['data_type'] if 'data_type' in row else row.get('comment', None)
-                break
-        # if there is no table description, check the current table comment and log if there is a mismatch
-        if not self.table_description:
-            if current_comment is not None:
-                dq_issues.append({
-                    "table_name": self.full_table_name(),
-                    "column_name": None,
-                    "issue_type": "table_comment_missing_from_structtype",
-                    "current_value": current_comment,
-                    "expected_value": None,
-                    "checked_at": now,
-                })
-                log and self.logger.warning(
-                    f"Table description is missing for {self.full_table_name()}, skipping."
-                )
-                return spark.createDataFrame([], schema=dq_schema)
+            self.logger.error(f"change_uc_table_comment is only supported for Unity Catalog tables, "
+                              f"not for {self.full_table_name()}.")
+            return spark.createDataFrame([], dq_schema)
         else:
-            # Compare and update if needed
-            if current_comment != self.table_description:
-                dq_issues.append({
-                    "table_name": self.full_table_name(),
-                    "column_name": None,
-                    "issue_type": "table_comment_mismatch",
-                    "current_value": current_comment,
-                    "expected_value": self.table_description,
-                    "checked_at": now,
-                })
+            # initialize the issues list and the current date and time
+            dq_issues = []
+            now = datetime.now()
+            # Fetch current table comment from the catalog
+            table_info = spark.sql(
+                f"DESCRIBE TABLE EXTENDED `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}`"
+            ).toPandas()
+            # Find the row with col_name == 'Comment'
+            current_comment = None
+            for _, row in table_info.iterrows():
+                if str(row['col_name']).strip().lower() == 'comment':
+                    current_comment = row['data_type'] if 'data_type' in row else row.get('comment', None)
+                    break
+            # if there is no table description, check the current table comment and log if there is a mismatch
+            if not self.table_description:
                 if current_comment is not None:
+                    dq_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": None,
+                        "check_key": "table_comment_missing_from_structtype",
+                        "check_value": current_comment,
+                        "check_dt": now,
+                    })
                     log and self.logger.warning(
-                        f"Table comment for {self.full_table_name()} is '{current_comment}' "
-                        f"but StructType description is '{self.table_description}'. Updating.")
+                        f"Table description is missing for {self.full_table_name()}, skipping."
+                    )
+                    return spark.createDataFrame(dq_issues, schema=dq_schema)
                 else:
                     log and self.logger.info(
-                        f"Setting table comment for {self.full_table_name()} to '{self.table_description}'")
-                # Escape single quotes in the description for SQL
-                safe_description = self.table_description.replace('"', '\\"')
-                sql = (
-                    f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
-                    + 'SET TBLPROPERTIES ("comment" = "' + safe_description + '")'
-                )
-                spark.sql(sql)
-                log and self.logger.info(
-                    f"Set table comment for {self.full_table_name()}: {self.table_description}"
-                )
+                        f"Table {self.full_table_name()} already has the correct comment.")
+                    return spark.createDataFrame([], schema=dq_schema)
             else:
-                log and self.logger.info(
-                    f"Table {self.full_table_name()} already has the correct comment.")
-            dq_df = spark.createDataFrame(dq_issues, schema=dq_schema)
-            return dq_df
+                # Compare and update if needed
+                if current_comment != self.table_description:
+                    dq_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": None,
+                        "check_key": "table_comment_mismatch",
+                        "check_value": f"The table comment is [{current_comment}] "
+                        f"which differs from StructType description [{self.table_description}]",
+                        "check_dt": now,
+                    })
+                    if current_comment is not None:
+                        log and self.logger.warning(
+                            f"Table comment for {self.full_table_name()} is '{current_comment}' "
+                            f"but StructType description is '{self.table_description}'. Updating.")
+                    else:
+                        log and self.logger.info(
+                            f"Setting table comment for {self.full_table_name()} to '{self.table_description}'")
+                    # Escape single quotes in the description for SQL
+                    safe_description = self.table_description.replace('"', '\\"')
+                    sql = (
+                        f"ALTER TABLE `{self.catalog_name}`.`{self.schema_name}`.`{self.table_name}` "
+                        + 'SET TBLPROPERTIES ("comment" = "' + safe_description + '")'
+                    )
+                    spark.sql(sql)
+                    log and self.logger.info(
+                        f"Set table comment for {self.full_table_name()}: {self.table_description}"
+                    )
+                    return spark.createDataFrame([], schema=dq_schema)
+                else:
+                    log and self.logger.info(
+                        f"Table {self.full_table_name()} already has the correct comment.")
+                dq_df = spark.createDataFrame(dq_issues, schema=dq_schema)
+                return dq_df
 
-    def change_uc_table_and_columns_comments(self, log: bool = True, spark: Optional[SparkSession] = None):
+    def drop_uc_table_primary_keys(self, spark: Optional[SparkSession] = None):
         """
-        For Unity Catalog tables, set the table comment using self.table_description and
-        the columns comments using the 'description' in the metadata of each StructField
-        in self.table_schema.
+        Drops all primary key constraints from the table (Unity Catalog only), without CASCADE.
+        Returns a DQ DataFrame of PK drop actions/issues.
         Args:
-            log (bool): Whether to log the operation.
-            spark (Optional[SparkSession]): The Spark session to use. If None, uses self.spark.
-
+            spark: SparkSession
         Returns:
-            None
+            DataFrame of PK drop issues (DQ style)
         """
+        dq_schema = StructType([
+                StructField("table_name", StringType(), True),
+                StructField("column_name", StringType(), True),
+                StructField("check_key", StringType(), True),
+                StructField("check_value", StringType(), True),
+                StructField("check_dt", TimestampType(), True),
+            ])
         if spark is None:
             spark = self.spark
-        self.change_uc_table_comment(log, spark)
-        self.change_uc_columns_comments(log, spark)
+        if not self.is_unity_catalog():
+            self.logger.error(f"drop_uc_table_primary_keys is only supported for Unity Catalog tables, "
+                              f"not for {self.full_table_name()}.")
+            return spark.createDataFrame([], dq_schema)
+        else:
+            now = datetime.now()
+            pk_issues = []
+            # Find all PK constraints in the constraints section
+            desc_ext = spark.sql(f"DESCRIBE TABLE EXTENDED {self.full_table_name()}").collect()
+            in_constraints = False
+            pk_constraints = []
+            for row in desc_ext:
+                if getattr(row, 'col_name', '').strip().lower() == "# constraints":
+                    in_constraints = True
+                    continue
+                if in_constraints:
+                    if not getattr(row, 'col_name', '').strip() or getattr(row, 'col_name', '').strip().startswith("#"):
+                        break
+                    dtype = getattr(row, 'data_type', '').strip().upper()
+                    if dtype.startswith("PRIMARY KEY"):
+                        pk_constraints.append(getattr(row, 'col_name', '').strip())
+            # Drop each PK constraint (without CASCADE)
+            for pk_name in pk_constraints:
+                try:
+                    spark.sql(f"ALTER TABLE {self.full_table_name()} DROP CONSTRAINT {pk_name}")
+                    self.logger.info(f"Dropped primary key constraint {pk_name} from {self.full_table_name()}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to drop primary key constraint {pk_name} from {self.full_table_name()}: {e}")
+                    pk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": None,
+                        "check_key": "pk_drop_failed",
+                        "check_value": pk_name,
+                        "check_dt": now,
+                    })
+            pk_issues_df = spark.createDataFrame(pk_issues, schema=dq_schema)
+            return pk_issues_df
+
+    def drop_uc_table_foreign_keys(self, spark: Optional[SparkSession] = None):
+        """
+        Drops all foreign key constraints from the table (Unity Catalog only), without CASCADE.
+        Returns a DQ DataFrame of FK drop actions/issues.
+        Args:
+            spark: SparkSession
+        Returns:
+            DataFrame of FK drop issues (DQ style)
+        """
+        dq_schema = StructType([
+                StructField("table_name", StringType(), True),
+                StructField("column_name", StringType(), True),
+                StructField("check_key", StringType(), True),
+                StructField("check_value", StringType(), True),
+                StructField("check_dt", TimestampType(), True),
+            ])
+        if spark is None:
+            spark = self.spark
+        if not self.is_unity_catalog():
+            self.logger.error(f"drop_uc_table_foreign_keys is only supported for Unity Catalog tables, "
+                              f"not for {self.full_table_name()}.")
+            return spark.createDataFrame([], dq_schema)
+        else:
+            now = datetime.now()
+            fk_issues = []
+            # Find all FK constraints in the constraints section
+            desc_ext = spark.sql(f"DESCRIBE TABLE EXTENDED {self.full_table_name()}").collect()
+            in_constraints = False
+            fk_constraints = []
+            for row in desc_ext:
+                if getattr(row, 'col_name', '').strip().lower() == "# constraints":
+                    in_constraints = True
+                    continue
+                if in_constraints:
+                    if not getattr(row, 'col_name', '').strip() or getattr(row, 'col_name', '').strip().startswith("#"):
+                        break
+                    dtype = getattr(row, 'data_type', '').strip().upper()
+                    if dtype.startswith("FOREIGN KEY"):
+                        fk_constraints.append(getattr(row, 'col_name', '').strip())
+            # Drop each FK constraint (without CASCADE)
+            for fk_name in fk_constraints:
+                try:
+                    spark.sql(f"ALTER TABLE {self.full_table_name()} DROP CONSTRAINT {fk_name}")
+                    self.logger.info(f"Dropped foreign key constraint {fk_name} from {self.full_table_name()}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to drop foreign key constraint {fk_name} from {self.full_table_name()}: {e}")
+                    fk_issues.append({
+                        "table_name": self.full_table_name(),
+                        "column_name": None,
+                        "check_key": "fk_drop_failed",
+                        "check_value": fk_name,
+                        "check_dt": now,
+                    })
+            fk_issues_df = spark.createDataFrame(fk_issues, schema=dq_schema)
+            return fk_issues_df

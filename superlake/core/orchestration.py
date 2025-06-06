@@ -417,11 +417,11 @@ class SuperOrchestrator:
                         else:
                             raise ValueError(f"Invalid orchestration mode: {orchestration_mode}")
                         # display the orchestration plan in a readable format
-                        print("-------------------------------  SuperOrchestrator -------------------------------")
-                        print("\nbase directories:")
+                        print("-------------------------------  SuperOrchestrator -------------------------------", flush=True)
+                        print("\nbase directories:", flush=True)
                         for base_dir in self.BASE_DIRS:
-                            print(f"  - {base_dir}")
-                        print("\ndiscovered files:")
+                            print(f"  - {base_dir}", flush=True)
+                        print("\ndiscovered files:", flush=True)
                         for file in py_files:
                             # Show only the path from the project_root basefolder (self.module_root)
                             parts = os.path.normpath(file).split(os.sep)
@@ -430,22 +430,22 @@ class SuperOrchestrator:
                                 display_path = os.path.join(*parts[idx:])
                             else:
                                 display_path = file
-                            print(f"  - {display_path}")
-                        print("\nParameters:")
-                        print(f" - loading mode: {loading_mode}")
-                        print(f" - target pipelines: {target_pipelines}")
-                        print(f" - orchestration mode: {orchestration_mode}")
-                        print(f" - direction: {direction}")
-                        print(f" - parallelize groups: {parallelize_groups}")
-                        print(f" - fail fast: {fail_fast}")
-                        print(f" - skip downstream on failure: {skip_downstream_on_failure}")
-                        print("\nOrchestration plan:")
+                            print(f"  - {display_path}", flush=True)
+                        print("\nParameters:", flush=True)
+                        print(f" - loading mode: {loading_mode}", flush=True)
+                        print(f" - target pipelines: {target_pipelines}", flush=True)
+                        print(f" - orchestration mode: {orchestration_mode}", flush=True)
+                        print(f" - direction: {direction}", flush=True)
+                        print(f" - parallelize groups: {parallelize_groups}", flush=True)
+                        print(f" - fail fast: {fail_fast}", flush=True)
+                        print(f" - skip downstream on failure: {skip_downstream_on_failure}", flush=True)
+                        print("\nOrchestration plan:", flush=True)
                         for i, group in enumerate(groups_in_order, 1):
                             rel_paths = [os.path.relpath(name_map[f], os.path.commonpath(self.BASE_DIRS)) for f in group]
-                            print(f"  Group {i}:")
+                            print(f"  Group {i}:", flush=True)
                             for rel_path in rel_paths:
-                                print(f"    - {rel_path}")
-                        print("\n--------------------------------------------------------------------------------\n")
+                                print(f"    - {rel_path}", flush=True)
+                        print("\n--------------------------------------------------------------------------------\n", flush=True)
                         # Build reverse graph for upstream lookup (filtered graph)
                         reverse_graph = {k: [] for k in graph}
                         for node, deps in graph.items():
