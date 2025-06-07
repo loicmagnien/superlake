@@ -550,6 +550,7 @@ class SuperDeltaTable:
             now = datetime.now()
             fk_issues = []
             valid_foreign_keys = []
+
             # local function to check if the referenced table exists
             def referenced_table_exists(spark, ref_table):
                 try:
@@ -1642,7 +1643,9 @@ class SuperDeltaTable:
                         )
                         spark.sql(sql)
                     else:
-                        log and self.logger.info(f"Column `{field.name}` in {self.full_table_name()} already has the correct comment '{current_comment}'")
+                        log and self.logger.info(
+                            f"Column `{field.name}` in {self.full_table_name()} already has the correct comment "
+                            f"[{current_comment}]")
 
             # Return a DataFrame of DQ issues if any, else None
             if dq_issues:
