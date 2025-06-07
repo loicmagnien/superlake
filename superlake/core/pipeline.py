@@ -324,8 +324,8 @@ class SuperPipeline:
         # force the table save mode to append
         self.bronze_table.table_save_mode = TableSaveMode.Append
         if self.environment == "debug":
-            print(f"Table save mode: {str(self.bronze_table.table_save_mode.value)}")
-            print(cdc_df.show())
+            print(f"Table save mode: {str(self.bronze_table.table_save_mode.value)}", flush=True)
+            print(cdc_df.show(), flush=True)
         # save the cdc_df into the bronze table
         self.bronze_table.save(cdc_df, mode=str(self.bronze_table.table_save_mode.value), spark=self.spark)
         self.super_tracer.add_trace(self.superlake_dt, self.pipeline_name, "bronze_updated")
@@ -343,8 +343,8 @@ class SuperPipeline:
         # force the table save mode to merge
         self.bronze_table.table_save_mode = TableSaveMode.Merge
         if self.environment == "debug":
-            print(f"Table save mode: {str(self.bronze_table.table_save_mode.value)}")
-            print(cdc_df.show())
+            print(f"Table save mode: {str(self.bronze_table.table_save_mode.value)}", flush=True)
+            print(cdc_df.show(), flush=True)
         # save the cdc_df into the bronze table
         self.bronze_table.save(cdc_df, mode=str(self.bronze_table.table_save_mode.value), spark=self.spark)
         self.super_tracer.add_trace(self.superlake_dt, self.pipeline_name, "bronze_updated")
@@ -385,8 +385,8 @@ class SuperPipeline:
                 raise
         self.super_tracer.add_trace(self.superlake_dt, self.pipeline_name, "silver_updated")
         if self.environment == "debug":
-            print(f"Table save mode: {str(self.silver_table.table_save_mode.value)}")
-            print(bronze_df.show())
+            print(f"Table save mode: {str(self.silver_table.table_save_mode.value)}", flush=True)
+            print(bronze_df.show(), flush=True)
 
     def log_and_metrics_duration(self, start_time: float) -> None:
         """
@@ -411,9 +411,9 @@ class SuperPipeline:
             None
         """
         if self.environment in ["test", "debug"]:
-            print(f"\n{self.bronze_table.full_table_name()}:\n")
+            print(f"\n{self.bronze_table.full_table_name()}:\n", flush=True)
             self.bronze_table.read().show()
-            print(f"\n{self.silver_table.full_table_name()}:\n")
+            print(f"\n{self.silver_table.full_table_name()}:\n", flush=True)
             self.silver_table.read().show()
 
     def execute(self) -> None:
@@ -559,7 +559,7 @@ class SuperSimplePipeline:
     def show_tables(self) -> None:
         """Shows the tables"""
         if self.environment in ["test", "debug"]:
-            print(f"\nTable {self.table.full_table_name()}:\n")
+            print(f"\nTable {self.table.full_table_name()}:\n", flush=True)
             self.table.read().show()
 
     def execute(self) -> None:

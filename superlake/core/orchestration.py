@@ -42,6 +42,11 @@ class SuperOrchestrator:
         """
         Given a dependency graph and a target file (basename), return a set of all files
         (including the target) that are dependencies (recursively) of the target.
+        Args:
+            graph (dict): The dependency graph.
+            target_file (str): The target file (basename).
+        Returns:
+            set: A set of all files that are dependencies of the target.
         """
         deps = set()
 
@@ -58,6 +63,11 @@ class SuperOrchestrator:
         """
         Given a dependency graph and a target file (basename), return a set of all files
         (including the target) that are dependents (recursively) of the target.
+        Args:
+            graph (dict): The dependency graph.
+            target_file (str): The target file (basename).
+        Returns:
+            set: A set of all files that are dependents of the target.
         """
         # Build reverse graph: for each node, who depends on it
         reverse_graph = {k: [] for k in graph}
@@ -76,6 +86,13 @@ class SuperOrchestrator:
         return dependents
 
     def discover_files(self, base_dirs):
+        """
+        Discover all Python files in the given base directories.
+        Args:
+            base_dirs (list): The base directories to scan.
+        Returns:
+            list: A list of all Python files found in the base directories.
+        """
         py_files = []
         for base in base_dirs:
             for root, _, files in os.walk(base):
@@ -88,6 +105,13 @@ class SuperOrchestrator:
         return py_files
 
     def parse_dependencies(self, py_file):
+        """
+        Parse the dependencies of a Python file.
+        Args:
+            py_file (str): The path to the Python file.
+        Returns:
+            list: A list of all dependencies of the Python file.
+        """
         with open(py_file, 'r') as f:
             tree = ast.parse(f.read(), filename=py_file)
         deps = []
@@ -110,6 +134,13 @@ class SuperOrchestrator:
         return deps
 
     def build_graph(self, py_files):
+        """
+        Build the dependency graph from the list of Python files.
+        Args:
+            py_files (list): The list of Python files.
+        Returns:
+            tuple: A tuple containing the dependency graph and the name map.
+        """
         graph = defaultdict(list)
         name_map = {os.path.basename(f): f for f in py_files}
         for f in py_files:
@@ -123,6 +154,13 @@ class SuperOrchestrator:
         return graph, name_map
 
     def topo_sort(self, graph):
+        """
+        Topological sort of the dependency graph.
+        Args:
+            graph (dict): The dependency graph.
+        Returns:
+            list: A list of all files in topological order.
+        """
         indegree = defaultdict(int)
         for node in graph:
             for dep in graph[node]:
@@ -155,6 +193,10 @@ class SuperOrchestrator:
         """
         Returns a list of all cycles in the graph. Each cycle is represented as a list of node names.
         If no cycles are found, returns an empty list.
+        Args:
+            graph (dict): The dependency graph.
+        Returns:
+            list: A list of all cycles in the graph. Each cycle is represented as a list of node names.
         """
         visited = set()
         stack = []
@@ -185,14 +227,21 @@ class SuperOrchestrator:
         return [list(c) for c in cycles]
 
     def get_module_and_func(self, file_path):
+        """
+        Get the module name, function name, and folder from the file path.
+        Args:
+            file_path (str): The path to the Python file.
+        Returns:
+            tuple: A tuple containing the module name, function name, and folder.
+        """
         parts = os.path.normpath(file_path).split(os.sep)
         base = os.path.splitext(os.path.basename(file_path))[0]
-        if "ingestion" in parts:
+        if f"{self.ingestion_folder}" in parts:
             func_name = f"get_pipeline_objects_{base}"
-            folder = "ingestion"
-        elif "modelisation" in parts:
+            folder = self.ingestion_folder
+        elif f"{self.modelisation_folder}" in parts:
             func_name = f"get_model_{base}"
-            folder = "modelisation"
+            folder = self.modelisation_folder
         else:
             raise ValueError(f"Could not determine pipeline type for path: {file_path}")
         # Find the module name from the project root
@@ -204,11 +253,18 @@ class SuperOrchestrator:
         return module_name, func_name, folder
 
     def import_and_run(self, module_name, func_name, folder, params):
+        """
+        Import the module and run the function.
+        Args:
+            module_name (str): The name of the module.
+            func_name (str): The name of the function.
+            folder (str): The folder of the pipeline.
+        """
         if module_name.startswith('.'):
             module_name = module_name.lstrip('.')
         mod = importlib.import_module(module_name)
         func = getattr(mod, func_name)
-        if folder == "ingestion":
+        if folder == self.ingestion_folder:
             (super_spark, _, logger, _, superlake_dt, super_tracer, environment) = params
             (bronze_table, silver_table, cdc_function, tra_function, del_function) = func(*params[:5])
             from superlake.core import SuperPipeline
@@ -417,11 +473,11 @@ class SuperOrchestrator:
                         else:
                             raise ValueError(f"Invalid orchestration mode: {orchestration_mode}")
                         # display the orchestration plan in a readable format
-                        print("-------------------------------  SuperOrchestrator -------------------------------")
-                        print("\nbase directories:")
+                        print("-------------------------------  SuperOrchestrator -------------------------------", flush=True)
+                        print("\nbase directories:", flush=True)
                         for base_dir in self.BASE_DIRS:
-                            print(f"  - {base_dir}")
-                        print("\ndiscovered files:")
+                            print(f"  - {base_dir}", flush=True)
+                        print("\ndiscovered files:", flush=True)
                         for file in py_files:
                             # Show only the path from the project_root basefolder (self.module_root)
                             parts = os.path.normpath(file).split(os.sep)
@@ -430,22 +486,22 @@ class SuperOrchestrator:
                                 display_path = os.path.join(*parts[idx:])
                             else:
                                 display_path = file
-                            print(f"  - {display_path}")
-                        print("\nParameters:")
-                        print(f" - loading mode: {loading_mode}")
-                        print(f" - target pipelines: {target_pipelines}")
-                        print(f" - orchestration mode: {orchestration_mode}")
-                        print(f" - direction: {direction}")
-                        print(f" - parallelize groups: {parallelize_groups}")
-                        print(f" - fail fast: {fail_fast}")
-                        print(f" - skip downstream on failure: {skip_downstream_on_failure}")
-                        print("\nOrchestration plan:")
+                            print(f"  - {display_path}", flush=True)
+                        print("\nParameters:", flush=True)
+                        print(f" - loading mode: {loading_mode}", flush=True)
+                        print(f" - target pipelines: {target_pipelines}", flush=True)
+                        print(f" - orchestration mode: {orchestration_mode}", flush=True)
+                        print(f" - direction: {direction}", flush=True)
+                        print(f" - parallelize groups: {parallelize_groups}", flush=True)
+                        print(f" - fail fast: {fail_fast}", flush=True)
+                        print(f" - skip downstream on failure: {skip_downstream_on_failure}", flush=True)
+                        print("\nOrchestration plan:", flush=True)
                         for i, group in enumerate(groups_in_order, 1):
                             rel_paths = [os.path.relpath(name_map[f], os.path.commonpath(self.BASE_DIRS)) for f in group]
-                            print(f"  Group {i}:")
+                            print(f"  Group {i}:", flush=True)
                             for rel_path in rel_paths:
-                                print(f"    - {rel_path}")
-                        print("\n--------------------------------------------------------------------------------\n")
+                                print(f"    - {rel_path}", flush=True)
+                        print("\n--------------------------------------------------------------------------------\n", flush=True)
                         # Build reverse graph for upstream lookup (filtered graph)
                         reverse_graph = {k: [] for k in graph}
                         for node, deps in graph.items():
