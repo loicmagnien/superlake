@@ -118,16 +118,16 @@ class SuperOrchestrator:
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 if node.module and (
-                    node.module.startswith(f'{self.module_root}.{self.ingestion_folder}') or
-                    node.module.startswith(f'{self.module_root}.{self.modelisation_folder}')
+                    node.module.startswith(f'{self.module_root}.{self.ingestion_folder}')
+                    or node.module.startswith(f'{self.module_root}.{self.modelisation_folder}')
                 ):
                     dep = node.module.split('.')[-1] + '.py'
                     deps.append(dep)
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if (
-                        alias.name.startswith(f'{self.module_root}.{self.ingestion_folder}') or
-                        alias.name.startswith(f'{self.module_root}.{self.modelisation_folder}')
+                        alias.name.startswith(f'{self.module_root}.{self.ingestion_folder}')
+                        or alias.name.startswith(f'{self.module_root}.{self.modelisation_folder}')
                     ):
                         dep = alias.name.split('.')[-1] + '.py'
                         deps.append(dep)
@@ -359,15 +359,15 @@ class SuperOrchestrator:
             raise ValueError(f"Invalid mode: {mode}")
 
     def orchestrate(
-            self,
-            loading_mode='file',
-            orchestration_mode='process_last',
-            target_pipelines=None,
-            direction='all',
-            parallelize_groups=False,
-            fail_fast=True,
-            skip_downstream_on_failure=False
-            ):
+        self,
+        loading_mode='file',
+        orchestration_mode='process_last',
+        target_pipelines=None,
+        direction='all',
+        parallelize_groups=False,
+        fail_fast=True,
+        skip_downstream_on_failure=False
+    ):
         """
         Orchestrate the execution of data pipelines with dependency management, parallelization, and robust error handling.
 
