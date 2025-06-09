@@ -53,9 +53,9 @@ class AlertManager:
         self.handlers[name] = handler
 
     def check_alerts(
-            self,
-            metrics: Dict[str, float]
-            ) -> List[Alert]:
+        self,
+        metrics: Dict[str, float]
+    ) -> List[Alert]:
         """Check metrics against alert rules."""
         current_alerts = []
 
