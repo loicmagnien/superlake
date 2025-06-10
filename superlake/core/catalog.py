@@ -54,11 +54,11 @@ class SuperCataloguer:
     Utility class to discover and register all model and ingestion tables in a SuperLake lakehouse project.
     """
     def __init__(
-            self,
-            project_root: str,
-            modelisation_folder: str = "modelisation",
-            ingestion_folder: str = "ingestion"
-            ):
+        self,
+        project_root: str,
+        modelisation_folder: str = "modelisation",
+        ingestion_folder: str = "ingestion"
+    ):
         self.project_root = project_root
         self.modelisation_folder = modelisation_folder
         self.ingestion_folder = ingestion_folder
@@ -85,12 +85,12 @@ class SuperCataloguer:
         return generators
 
     def collect_all_tables(
-            self, super_spark, catalog_name, logger, managed, superlake_dt,
-            check_table_exists=True
-            ):
+        self, super_spark, catalog_name, logger, managed, superlake_dt,
+        check_table_exists=True, target_tables=None
+    ):
         """
         Collect all SuperDeltaTable objects from both modelisation and ingestion folders that exist.
-        Optionally register them in the catalog.
+        Optionally register them in the catalog. If target_tables is provided, only process tables whose fully qualified name matches.
         """
         all_tables = []
         for base_dir, generator_prefix, extract_tables_fn in [
@@ -102,6 +102,10 @@ class SuperCataloguer:
                 try:
                     result = generator(super_spark, catalog_name, logger, managed, superlake_dt)
                     for table in extract_tables_fn(result):
+                        # Only process if in target_tables (if specified)
+                        if target_tables is not None and hasattr(table, 'full_table_name'):
+                            if table.full_table_name() not in target_tables:
+                                continue
                         if isinstance(table, SuperDeltaTable) and table.table_exists():
                             all_tables.append(table)
                         else:
@@ -120,14 +124,17 @@ class SuperCataloguer:
     def _process_tables(
         self, super_spark, catalog_name, logger, managed, superlake_dt,
         table_op, check_table_exists,
-        persist_catalog_quality=False, super_catalog_quality_table=None
+        persist_catalog_quality=False, super_catalog_quality_table=None,
+        target_tables=None
     ):
         """
         Helper to process all tables with a single operation, handle DQ persistence and logging.
+        If target_tables is provided, only process those tables.
         """
         all_tables = self.collect_all_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
-            check_table_exists=check_table_exists
+            check_table_exists=check_table_exists,
+            target_tables=target_tables
         )
         dq_dfs = []
         for table in all_tables:
@@ -151,98 +158,112 @@ class SuperCataloguer:
             combined_dq_df = SuperDataframe.super_union_by_name(dq_dfs)
             super_catalog_quality_table.save_dq_df(combined_dq_df)
 
-    def register_tables(self, super_spark, catalog_name, logger, managed, superlake_dt):
+    def register_tables(self, super_spark, catalog_name, logger, managed, superlake_dt, target_tables=None):
         logger.info("Registering tables in catalog...")
         self._process_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
             table_op=lambda t: t.register_table_in_catalog(),
             check_table_exists=True,
+            target_tables=target_tables
         )
 
-    def ensure_tables_exist(self, super_spark, catalog_name, logger, managed, superlake_dt):
+    def ensure_tables_exist(self, super_spark, catalog_name, logger, managed, superlake_dt, target_tables=None):
         logger.info("Ensuring tables exist...")
         self._process_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
             table_op=lambda t: t.ensure_table_exists(),
             check_table_exists=False,
+            target_tables=target_tables
         )
 
     def apply_table_comment(
-            self, super_spark, catalog_name, logger, managed, superlake_dt,
-            persist_catalog_quality=False, super_catalog_quality_table=None
-            ):
+        self, super_spark, catalog_name, logger, managed, superlake_dt,
+        persist_catalog_quality=False, super_catalog_quality_table=None,
+        target_tables=None
+    ):
         logger.info("Applying table comments to tables...")
         self._process_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
             table_op=lambda t: t.change_uc_table_comment(),
             check_table_exists=True,
             persist_catalog_quality=persist_catalog_quality,
-            super_catalog_quality_table=super_catalog_quality_table
+            super_catalog_quality_table=super_catalog_quality_table,
+            target_tables=target_tables
         )
 
     def apply_columns_comments(
-            self, super_spark, catalog_name, logger, managed, superlake_dt,
-            persist_catalog_quality=False, super_catalog_quality_table=None
-            ):
+        self, super_spark, catalog_name, logger, managed, superlake_dt,
+        persist_catalog_quality=False, super_catalog_quality_table=None,
+        target_tables=None
+    ):
         logger.info("Applying columns comments to tables...")
         self._process_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
             table_op=lambda t: t.change_uc_columns_comments(),
             check_table_exists=True,
             persist_catalog_quality=persist_catalog_quality,
-            super_catalog_quality_table=super_catalog_quality_table
+            super_catalog_quality_table=super_catalog_quality_table,
+            target_tables=target_tables
         )
 
     def drop_primary_keys(
-            self, super_spark, catalog_name, logger, managed, superlake_dt,
-            persist_catalog_quality=False, super_catalog_quality_table=None
-            ):
+        self, super_spark, catalog_name, logger, managed, superlake_dt,
+        persist_catalog_quality=False, super_catalog_quality_table=None,
+        target_tables=None
+    ):
         logger.info("Dropping primary keys for tables...")
         self._process_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
             table_op=lambda t: t.drop_uc_table_primary_keys(spark=t.spark),
             check_table_exists=True,
             persist_catalog_quality=persist_catalog_quality,
-            super_catalog_quality_table=super_catalog_quality_table
+            super_catalog_quality_table=super_catalog_quality_table,
+            target_tables=target_tables
         )
 
     def drop_foreign_keys(
-            self, super_spark, catalog_name, logger, managed, superlake_dt,
-            persist_catalog_quality=False, super_catalog_quality_table=None
-            ):
+        self, super_spark, catalog_name, logger, managed, superlake_dt,
+        persist_catalog_quality=False, super_catalog_quality_table=None,
+        target_tables=None
+    ):
         logger.info("Dropping foreign keys for tables...")
         self._process_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
             table_op=lambda t: t.drop_uc_table_foreign_keys(spark=t.spark),
             check_table_exists=True,
             persist_catalog_quality=persist_catalog_quality,
-            super_catalog_quality_table=super_catalog_quality_table
+            super_catalog_quality_table=super_catalog_quality_table,
+            target_tables=target_tables
         )
 
     def create_primary_keys(
-            self, super_spark, catalog_name, logger, managed, superlake_dt,
-            force_create_primary_keys=False,
-            persist_catalog_quality=False, super_catalog_quality_table=None
-            ):
+        self, super_spark, catalog_name, logger, managed, superlake_dt,
+        force_create_primary_keys=False,
+        persist_catalog_quality=False, super_catalog_quality_table=None,
+        target_tables=None
+    ):
         logger.info("Creating primary keys for tables...")
         self._process_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
             table_op=lambda t: t.create_uc_table_primary_keys(spark=t.spark, force_create=force_create_primary_keys),
             check_table_exists=True,
             persist_catalog_quality=persist_catalog_quality,
-            super_catalog_quality_table=super_catalog_quality_table
+            super_catalog_quality_table=super_catalog_quality_table,
+            target_tables=target_tables
         )
 
     def create_foreign_keys(
-            self, super_spark, catalog_name, logger, managed, superlake_dt,
-            force_create_foreign_keys=False,
-            persist_catalog_quality=False, super_catalog_quality_table=None
-            ):
+        self, super_spark, catalog_name, logger, managed, superlake_dt,
+        force_create_foreign_keys=False,
+        persist_catalog_quality=False, super_catalog_quality_table=None,
+        target_tables=None
+    ):
         logger.info("Starting creation of foreign keys for tables...")
         self._process_tables(
             super_spark, catalog_name, logger, managed, superlake_dt,
             table_op=lambda t: t.create_uc_table_foreign_keys(spark=t.spark, force_create=force_create_foreign_keys),
             check_table_exists=True,
             persist_catalog_quality=persist_catalog_quality,
-            super_catalog_quality_table=super_catalog_quality_table
+            super_catalog_quality_table=super_catalog_quality_table,
+            target_tables=target_tables
         )
