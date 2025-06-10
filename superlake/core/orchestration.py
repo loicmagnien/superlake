@@ -4,6 +4,7 @@ import ast
 from collections import defaultdict, deque
 import importlib
 import threading
+from typing import Optional, Dict, Any
 
 
 class SuperOrchestrator:
@@ -252,13 +253,16 @@ class SuperOrchestrator:
             raise ValueError(f"Could not find '{self.module_root}' in path: {file_path}")
         return module_name, func_name, folder
 
-    def import_and_run(self, module_name, func_name, folder, params):
+    def import_and_run(self, module_name, func_name, folder, params, loop_params=None):
         """
         Import the module and run the function.
         Args:
             module_name (str): The name of the module.
             func_name (str): The name of the function.
             folder (str): The folder of the pipeline.
+            loop_params (dict, optional):
+                Dictionary with keys: 'interval_seconds' and 'max_runs'.
+                If provided, the pipelines will be run in a loop with the given interval and maximum number of runs.
         """
         if module_name.startswith('.'):
             module_name = module_name.lstrip('.')
@@ -283,7 +287,6 @@ class SuperOrchestrator:
                 force_caching=True,
                 environment=environment
             )
-            pipeline.execute()
         else:
             (super_spark, _, logger, _, superlake_dt, super_tracer, environment) = params
             table, generator = func(*params[:5])
@@ -301,6 +304,10 @@ class SuperOrchestrator:
                 table=table,
                 environment=environment
             )
+        # Use loop_execute if either interval_seconds or max_runs is set, else execute
+        if loop_params is not None:
+            pipeline.loop_execute(interval_seconds=loop_params['interval_seconds'], max_runs=loop_params['max_runs'])
+        else:
             pipeline.execute()
 
     def get_parallel_groups(self, graph, mode='process_first'):
@@ -366,7 +373,8 @@ class SuperOrchestrator:
         direction='all',
         parallelize_groups=False,
         fail_fast=True,
-        skip_downstream_on_failure=False
+        skip_downstream_on_failure=False,
+        loop_params: Optional[Dict[str, Any]] = None
     ):
         """
         Orchestrate the execution of data pipelines with dependency management, parallelization, and robust error handling.
@@ -393,6 +401,9 @@ class SuperOrchestrator:
             skip_downstream_on_failure (bool):
                 If True, a pipeline will be skipped if all of its upstream dependencies (from the full dependency graph) have failed or been skipped.
                 If False, downstream pipelines are always run.
+            loop_params (dict, optional):
+                Dictionary with keys: 'interval_seconds' and 'max_runs'.
+                If provided, the pipelines will be run in a loop with the given interval and maximum number of runs.
 
         Features:
             - Dependency graph analysis: Automatically discovers dependencies between pipeline files.
@@ -488,13 +499,14 @@ class SuperOrchestrator:
                                 display_path = file
                             print(f"  - {display_path}", flush=True)
                         print("\nParameters:", flush=True)
-                        print(f" - loading mode: {loading_mode}", flush=True)
-                        print(f" - target pipelines: {target_pipelines}", flush=True)
-                        print(f" - orchestration mode: {orchestration_mode}", flush=True)
-                        print(f" - direction: {direction}", flush=True)
-                        print(f" - parallelize groups: {parallelize_groups}", flush=True)
-                        print(f" - fail fast: {fail_fast}", flush=True)
+                        print(f" - loading mode:               {loading_mode}", flush=True)
+                        print(f" - target pipelines:           {target_pipelines}", flush=True)
+                        print(f" - orchestration mode:         {orchestration_mode}", flush=True)
+                        print(f" - direction:                  {direction}", flush=True)
+                        print(f" - parallelize groups:         {parallelize_groups}", flush=True)
+                        print(f" - fail fast:                  {fail_fast}", flush=True)
                         print(f" - skip downstream on failure: {skip_downstream_on_failure}", flush=True)
+                        print(f" - loop params:                {loop_params}", flush=True)
                         print("\nOrchestration plan:", flush=True)
                         for i, group in enumerate(groups_in_order, 1):
                             rel_paths = [os.path.relpath(name_map[f], os.path.commonpath(self.BASE_DIRS)) for f in group]
@@ -541,7 +553,13 @@ class SuperOrchestrator:
                                         file_path = name_map[fname]
                                         module_name, func_name, folder = self.get_module_and_func(file_path)
                                         self.logger.info(f"Running {module_name}.{func_name} as a {folder} pipeline...")
-                                        self.import_and_run(module_name, func_name, folder, params)
+                                        self.import_and_run(
+                                            module_name,
+                                            func_name,
+                                            folder,
+                                            params,
+                                            loop_params=loop_params
+                                        )
                                         with pipeline_status_lock:
                                             pipeline_status[fname] = 'success'
                                     except Exception as e:

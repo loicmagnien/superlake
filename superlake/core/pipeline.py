@@ -145,7 +145,67 @@ class SuperTracer:
         return trace_df.filter(F.col("trace_key") == trace_key).filter(F.col("trace_value") == trace_value).count() > 0
 
 
-class SuperPipeline:
+class Waiter:
+    """
+    Context manager to ensure a block takes at least 'interval_seconds' seconds to execute.
+    args:
+        interval_seconds (int): The interval in seconds.
+    returns:
+        None
+    """
+    def __init__(self, interval_seconds: int) -> None:
+        self.interval_seconds = interval_seconds
+
+    def __enter__(self) -> None:
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exception_type, exception_value, traceback) -> None:
+        if exception_type is None:
+            to_be_waited = self.interval_seconds - (time.time() - self.start)
+            if to_be_waited > 0:
+                time.sleep(to_be_waited)
+        else:
+            print(f"Exception {exception_type} occurred with value {exception_value}: {traceback}")
+
+
+class LoopPipelineMixin:
+    """
+    Mixin for pipelines both SuperPipeline and SuperSimplePipeline.
+    Allows to run the pipeline in a loop, with a wait interval between runs.
+    """
+    def loop_execute(self, interval_seconds: int = 60, max_runs: int = None) -> None:
+        """
+        Runs the pipeline in a loop, with a wait interval between runs.
+        args:
+            interval_seconds (int): Number of seconds to wait between runs (default: 60)
+            max_runs (int or None): Maximum number of runs (default: None, meaning unlimited)
+        returns:
+            None
+        """
+        run_count = 0
+        try:
+            while max_runs is None or run_count < max_runs:
+                logger = getattr(self, 'logger', None)
+                name = getattr(self, 'pipeline_name', self.__class__.__name__)
+                if logger:
+                    logger.info(f"{self.__class__.__name__} loop: {name} Starting run {run_count + 1}/{max_runs}")
+                with Waiter(interval_seconds):
+                    self.execute()
+                run_count += 1
+                # update the superlake_dt for the next run
+                self.superlake_dt = datetime.now()
+                if logger:
+                    logger.info(f"{self.__class__.__name__} loop: {name} Completed run {run_count}/{max_runs}")
+        except KeyboardInterrupt:
+            logger = getattr(self, 'logger', None)
+            if logger:
+                logger.info(f"{self.__class__.__name__}.loop: Stopped by user.")
+            else:
+                print(f"{self.__class__.__name__}.loop: Stopped by user.")
+
+
+class SuperPipeline(LoopPipelineMixin):
     """
     Pipeline management for SuperLake.
 
@@ -349,17 +409,21 @@ class SuperPipeline:
         self.bronze_table.save(cdc_df, mode=str(self.bronze_table.table_save_mode.value), spark=self.spark)
         self.super_tracer.add_trace(self.superlake_dt, self.pipeline_name, "bronze_updated")
 
-    def update_silver_from_bronze(self) -> None:
+    def update_silver_from_bronze(self, superlake_dt: Optional[datetime] = None) -> None:
         """
         Update silver table from bronze table.
         This function will update the silver table from the bronze table.
         args:
-            None
+            superlake_dt (datetime): The superlake_dt.
         returns:
             None
         """
+        # if superlake_dt is not provided, use the Pipeline's superlake_dt (default)
+        # the superlake_dt is passed when using reprocess_silver_from_bronze()
+        if superlake_dt is None:
+            superlake_dt = self.superlake_dt
         # read the bronze table (for current superlake_dt), apply the transformation and save the data into silver
-        bronze_df = self.bronze_table.read().filter(F.col("superlake_dt") == self.superlake_dt)
+        bronze_df = self.bronze_table.read().filter(F.col("superlake_dt") == superlake_dt)
         if self.tra_function:
             bronze_df = self.tra_function(bronze_df)
         try:
@@ -383,10 +447,50 @@ class SuperPipeline:
                 )
             else:
                 raise
-        self.super_tracer.add_trace(self.superlake_dt, self.pipeline_name, "silver_updated")
+        self.super_tracer.add_trace(superlake_dt, self.pipeline_name, "silver_updated")
         if self.environment == "debug":
             print(f"Table save mode: {str(self.silver_table.table_save_mode.value)}", flush=True)
             print(bronze_df.show(), flush=True)
+
+    def reprocess_silver_from_bronze(self) -> None:
+        """
+        This function will reprocess the silver table from the bronze table for each distinct superlake_dt.
+        args:
+            None
+        returns:
+            None
+        """
+        # read the bronze table and get the distinct superlake_dt (should scan the partitions)
+        superlake_dt_rows = (
+            self.bronze_table.read()
+            .select(F.col("superlake_dt"))
+            .distinct()
+            .orderBy(F.col("superlake_dt").asc())
+            .collect()
+        )
+        # delete the data from silver
+        self.logger.info(f"Deleting data from {self.silver_table.full_table_name()}...")
+        self.spark.sql(f"DELETE FROM {self.silver_table.full_table_name()}")
+        self.logger.info(f"Deleted data from {self.silver_table.full_table_name()}.")
+        # for each superlake_dt, read the bronze table, apply the transformation and save the data into silver
+        for i, row in enumerate(superlake_dt_rows, 1):
+            superlake_dt = row.superlake_dt
+            try:
+                self.update_silver_from_bronze(superlake_dt)
+                self.logger.info(
+                    f"Processed {i}/{len(superlake_dt_rows)}: {superlake_dt} "
+                    f"({self.silver_table.full_table_name()})"
+                )
+            except Exception as e:
+                self.logger.error(
+                    f"Failed to process {superlake_dt}: {e} "
+                    f"({self.silver_table.full_table_name()})"
+                )
+        # log the end of the reprocessing
+        self.logger.info(
+            f"Reprocessed table {self.silver_table.full_table_name()} "
+            f"from table {self.bronze_table.full_table_name()}."
+        )
 
     def log_and_metrics_duration(self, start_time: float) -> None:
         """
@@ -533,7 +637,7 @@ class SuperPipeline:
                 return
 
 
-class SuperSimplePipeline:
+class SuperSimplePipeline(LoopPipelineMixin):
     """Simple pipeline for SuperLake: runs a function(spark, superlake_dt) and saves to table."""
     def __init__(
         self,
