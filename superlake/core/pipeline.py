@@ -169,34 +169,72 @@ class Waiter:
             print(f"Exception {exception_type} occurred with value {exception_value}: {traceback}")
 
 
+class TimeKeeper:
+    """
+    Context manager to ensure a block runs for at most 'total_duration' seconds.
+    args:
+        total_duration (int): The total duration in seconds.
+    returns:
+        None
+    Usage:
+        with TimeKeeper(total_duration) as tk:
+            while tk.keep_going():
+                ...
+    """
+    def __init__(self, total_duration: int) -> None:
+        self.total_duration = total_duration
+        self.start_time = None
+
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        if exception_type is None:
+            pass
+        else:
+            print(f"Exception {exception_type} occurred with value {exception_value}: {traceback}")
+
+    def keep_going(self):
+        if self.total_duration is None:
+            return True
+        return (time.time() - self.start_time) < self.total_duration
+
+
 class LoopPipelineMixin:
     """
     Mixin for pipelines both SuperPipeline and SuperSimplePipeline.
-    Allows to run the pipeline in a loop, with a wait interval between runs.
+    Allows to run the pipeline in a loop, with a wait interval between runs or for a total duration.
+    args:
+        interval_seconds (int): Number of seconds to wait between runs (default: 60)
+        total_duration (int or None): Maximum total duration in seconds (default: None, meaning unlimited)
+    returns:
+        None
     """
-    def loop_execute(self, interval_seconds: int = 60, max_runs: int = None) -> None:
+    def loop_execute(self, min_interval_seconds: int = 60, max_duration_seconds: int = None) -> None:
         """
-        Runs the pipeline in a loop, with a wait interval between runs.
+        Runs the pipeline in a loop, with a wait interval between runs or for a total duration.
         args:
             interval_seconds (int): Number of seconds to wait between runs (default: 60)
-            max_runs (int or None): Maximum number of runs (default: None, meaning unlimited)
+            maximum_duration (int or None): Maximum total duration in seconds (default: None, meaning unlimited)
         returns:
             None
         """
         run_count = 0
         try:
-            while max_runs is None or run_count < max_runs:
-                logger = getattr(self, 'logger', None)
-                name = getattr(self, 'pipeline_name', self.__class__.__name__)
-                if logger:
-                    logger.info(f"{self.__class__.__name__} loop: {name} Starting run {run_count + 1}/{max_runs}")
-                with Waiter(interval_seconds):
-                    self.execute()
-                run_count += 1
-                # update the superlake_dt for the next run
-                self.superlake_dt = datetime.now()
-                if logger:
-                    logger.info(f"{self.__class__.__name__} loop: {name} Completed run {run_count}/{max_runs}")
+            with TimeKeeper(max_duration_seconds) as tk:
+                while tk.keep_going():
+                    logger = getattr(self, 'logger', None)
+                    name = getattr(self, 'pipeline_name', self.__class__.__name__)
+                    if logger:
+                        logger.info(f"{self.__class__.__name__} loop: {name} Starting run {run_count + 1}")
+                    with Waiter(min_interval_seconds):
+                        self.execute()
+                    run_count += 1
+                    # update the superlake_dt for the next run
+                    self.superlake_dt = datetime.now()
+                    if logger:
+                        logger.info(f"{self.__class__.__name__} loop: {name} Completed run {run_count}")
         except KeyboardInterrupt:
             logger = getattr(self, 'logger', None)
             if logger:
