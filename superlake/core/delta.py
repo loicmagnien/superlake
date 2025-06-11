@@ -1194,8 +1194,6 @@ class SuperDeltaTable:
                     writer.saveAsTable(self.full_table_name())
                 else:
                     writer.save(self.table_path)
-            else:
-                self.logger.info(f"No new columns to add for {self.full_table_name()}. Skipping ALTER TABLE.")
 
     def align_df_to_table_schema(self, df, spark: Optional[SparkSession] = None):
         """
