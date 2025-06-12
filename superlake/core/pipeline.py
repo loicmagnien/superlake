@@ -676,25 +676,24 @@ class SuperPipeline(LoopPipelineMixin):
 
     def execute_micro_batch(self):
         """
-        Start the feedback-loop streaming pipeline.
+        Start the feedback-loop micro-batching pipeline.
         This is a hack to simulate a streaming pipeline for batch-only CDC sources.
+        There are 2 parts to it:
+          1. cdc-polling mechanism from the source to bronze
+          2. micro-batching feedback-loop mechanism from bronze to silver
         It is based on the feedback-loop mechanism:
             - the silver table is read as a stream
             - the CDC function is polled to get the new data
             - the new data is appended to the bronze table
-            - the bronze table is read as a stream
-            - the transformation function is applied to the bronze table
-        args:
-            cdc_interval_seconds (int): Number of seconds to wait between polling the CDC function (default: 10)
-        returns:
-            None
+            - the transformation function is applied
+            - the deletion function is applied
         """
         with self.logger.sub_name_context(self.pipeline_name):
-            self.logger.info(f"Starting StreamPipelineMixin (feedback loop) {self.pipeline_name}...")
+            self.logger.info(f"Starting SuperPipeline {self.pipeline_name} execution.")
 
             # the "silver stream" is triggered by reading the silver table
             # it processes the micro-batch and appends the new rows to the bronze table
-            def process_silver_trigger(batch_df, batch_id):
+            def process_micro_batch(batch_df, batch_id):
                 # change the superlake_dt to the current datetime
                 self.superlake_dt = datetime.now()
                 # wait for the CDC function to return data
@@ -713,13 +712,13 @@ class SuperPipeline(LoopPipelineMixin):
             def kickstart_stream():
                 batch_id = -1
                 df = self.spark.createDataFrame([], self.silver_table.table_schema)
-                process_silver_trigger(df, batch_id)
+                process_micro_batch(df, batch_id)
 
             # kickstart the stream by processing the first batch
             kickstart_stream()
 
             # process the source-bronze-silver-bronze feedback loop
-            silver_stream = (
+            micro_batch_stream = (
                 (
                     self.spark.readStream
                     .format("delta")
@@ -727,13 +726,13 @@ class SuperPipeline(LoopPipelineMixin):
                     .load(self.silver_table.table_path)
                 )
                 .writeStream
-                .foreachBatch(process_silver_trigger)
+                .foreachBatch(process_micro_batch)
                 .outputMode("append")
                 .option("checkpointLocation", self.silver_table.table_path.rstrip("/") + "_micro_batch_checkpoint")
                 .start()
             )
 
-            silver_stream.awaitTermination()
+            micro_batch_stream.awaitTermination()
 
 
 class SuperSimplePipeline(LoopPipelineMixin):
