@@ -457,7 +457,7 @@ class SuperOrchestrator:
                     (up not in pipeline_status and up not in graph) or pipeline_status.get(up) in ('failed', 'skipped')
                     for up in all_upstreams
                 )
-            
+
         def run_in_parallel(group):
             threads = []
             errors = []

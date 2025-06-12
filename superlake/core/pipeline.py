@@ -205,23 +205,22 @@ class LoopPipelineMixin:
     """
     Mixin for pipelines both SuperPipeline and SuperSimplePipeline.
     Allows to run the pipeline in a loop, with a wait interval between runs or for a total duration.
-    args:
-        interval_seconds (int): Number of seconds to wait between runs (default: 60)
-        total_duration (int or None): Maximum total duration in seconds (default: None, meaning unlimited)
-    returns:
-        None
+    Provides loop_execute() that runs the pipeline in a loop, with a wait interval between runs and for a total duration.
     """
     def loop_execute(self, min_interval_seconds: int = 60, max_duration_seconds: int = None) -> None:
         """
         Runs the pipeline in a loop, with a wait interval between runs or for a total duration.
         args:
-            interval_seconds (int): Number of seconds to wait between runs (default: 60)
-            maximum_duration (int or None): Maximum total duration in seconds (default: None, meaning unlimited)
+            min_interval_seconds (int): Number of seconds to wait between runs (default: 60)
+            max_duration_seconds (int or None): Maximum total duration in seconds (default: None, meaning unlimited)
         returns:
             None
         """
-        run_count = 0
         try:
+            # the loop will run until the max_duration_seconds is reached or the loop is stopped by the user
+            #  - the TimeKeeper will stop the loop if the max_duration_seconds is reached
+            #  - the Waiter will wait for the min_interval_seconds between runs
+            run_count = 0
             with TimeKeeper(max_duration_seconds) as tk:
                 while tk.keep_going():
                     logger = getattr(self, 'logger', None)
@@ -246,6 +245,7 @@ class LoopPipelineMixin:
 class SuperPipeline(LoopPipelineMixin):
     """
     Pipeline management for SuperLake.
+    Inherits LoopPipelineMixin to support loop_execute.
 
     args:
         logger (SuperLogger): The logger.
@@ -674,9 +674,73 @@ class SuperPipeline(LoopPipelineMixin):
                     self.logger.info("Caching - CDC dataframe unpersisted.")
                 return
 
+    def execute_micro_batch(self):
+        """
+        Start the feedback-loop streaming pipeline.
+        This is a hack to simulate a streaming pipeline for batch-only CDC sources.
+        It is based on the feedback-loop mechanism:
+            - the silver table is read as a stream
+            - the CDC function is polled to get the new data
+            - the new data is appended to the bronze table
+            - the bronze table is read as a stream
+            - the transformation function is applied to the bronze table
+        args:
+            cdc_interval_seconds (int): Number of seconds to wait between polling the CDC function (default: 10)
+        returns:
+            None
+        """
+        with self.logger.sub_name_context(self.pipeline_name):
+            self.logger.info(f"Starting StreamPipelineMixin (feedback loop) {self.pipeline_name}...")
+
+            # the "silver stream" is triggered by reading the silver table
+            # it processes the micro-batch and appends the new rows to the bronze table
+            def process_silver_trigger(batch_df, batch_id):
+                # change the superlake_dt to the current datetime
+                self.superlake_dt = datetime.now()
+                # wait for the CDC function to return data
+                cdc_data_count = 0
+                while cdc_data_count == 0:
+                    cdc_df = self.get_cdc_df()
+                    cdc_data_count = cdc_df.count()
+                    if cdc_data_count == 0:
+                        time.sleep(1)
+                # process the source-bronze-silver pipeline
+                self.append_cdc_into_bronze(cdc_df)
+                self.update_silver_from_bronze()
+                self.delete_from_silver()
+
+            # function to kickstart the stream
+            def kickstart_stream():
+                batch_id = -1
+                df = self.spark.createDataFrame([], self.silver_table.table_schema)
+                process_silver_trigger(df, batch_id)
+
+            # kickstart the stream by processing the first batch
+            kickstart_stream()
+
+            # process the source-bronze-silver-bronze feedback loop
+            silver_stream = (
+                (
+                    self.spark.readStream
+                    .format("delta")
+                    .option("skipChangeCommits", "true")  # because we do merge in silver
+                    .load(self.silver_table.table_path)
+                )
+                .writeStream
+                .foreachBatch(process_silver_trigger)
+                .outputMode("append")
+                .option("checkpointLocation", self.silver_table.table_path.rstrip("/") + "_micro_batch_checkpoint")
+                .start()
+            )
+
+            silver_stream.awaitTermination()
+
 
 class SuperSimplePipeline(LoopPipelineMixin):
-    """Simple pipeline for SuperLake: runs a function(spark, superlake_dt) and saves to table."""
+    """
+    Simple pipeline for SuperLake: runs a function(spark, superlake_dt) and saves to table.
+    Inherits LoopPipelineMixin to support loop_execute.
+    """
     def __init__(
         self,
         logger: Any,
