@@ -558,7 +558,7 @@ class SuperPipeline(LoopPipelineMixin):
             print(f"\n{self.silver_table.full_table_name()}:\n", flush=True)
             self.silver_table.read().show()
 
-    def execute(self) -> None:
+    def execute_batch(self) -> None:
         """
         Executes the ingestion, transformation and deletion logic for SuperPipeline.
         args:
@@ -733,6 +733,17 @@ class SuperPipeline(LoopPipelineMixin):
             )
 
             micro_batch_stream.awaitTermination()
+
+    def execute(self, pipeline_mode: str = "batch") -> None:
+        """
+        Execute the pipeline.
+        """
+        if pipeline_mode == "batch":
+            self.execute_batch()
+        elif pipeline_mode == "micro_batch":
+            self.execute_micro_batch()
+        else:
+            raise ValueError(f"Invalid pipeline mode: {pipeline_mode}")
 
 
 class SuperSimplePipeline(LoopPipelineMixin):
