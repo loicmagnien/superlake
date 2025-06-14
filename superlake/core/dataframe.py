@@ -117,13 +117,13 @@ class SuperDataframe:
         return df_dropped
 
     def distributed_pivot(
-            self,
-            pivoted_column: str,
-            pivoted_columns_list: List[str],
-            pivoted_value: str,
-            pivoted_join_keys: List[str],
-            pivoted_join_how: str
-         ) -> DataFrame:
+        self,
+        pivoted_column: str,
+        pivoted_columns_list: List[str],
+        pivoted_value: str,
+        pivoted_join_keys: List[str],
+        pivoted_join_how: str
+    ) -> DataFrame:
         """
         Distributed pivot on the DataFrame.
         Args:
@@ -199,10 +199,10 @@ class SuperDataframe:
         return pivoted_df
 
     def generate_surrogate_key(
-            self,
-            field_list: list,
-            key_column_name: str = "surrogate_key"
-            ) -> DataFrame:
+        self,
+        field_list: list,
+        key_column_name: str = "surrogate_key"
+    ) -> DataFrame:
         """
         Adds a surrogate key column using SHA-256 hash of specified fields.
         Returns null if any input field is null.

@@ -4,6 +4,7 @@ import ast
 from collections import defaultdict, deque
 import importlib
 import threading
+from typing import Optional, Dict, Any
 
 
 class SuperOrchestrator:
@@ -118,16 +119,16 @@ class SuperOrchestrator:
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 if node.module and (
-                    node.module.startswith(f'{self.module_root}.{self.ingestion_folder}') or
-                    node.module.startswith(f'{self.module_root}.{self.modelisation_folder}')
+                    node.module.startswith(f'{self.module_root}.{self.ingestion_folder}')
+                    or node.module.startswith(f'{self.module_root}.{self.modelisation_folder}')
                 ):
                     dep = node.module.split('.')[-1] + '.py'
                     deps.append(dep)
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if (
-                        alias.name.startswith(f'{self.module_root}.{self.ingestion_folder}') or
-                        alias.name.startswith(f'{self.module_root}.{self.modelisation_folder}')
+                        alias.name.startswith(f'{self.module_root}.{self.ingestion_folder}')
+                        or alias.name.startswith(f'{self.module_root}.{self.modelisation_folder}')
                     ):
                         dep = alias.name.split('.')[-1] + '.py'
                         deps.append(dep)
@@ -252,13 +253,16 @@ class SuperOrchestrator:
             raise ValueError(f"Could not find '{self.module_root}' in path: {file_path}")
         return module_name, func_name, folder
 
-    def import_and_run(self, module_name, func_name, folder, params):
+    def import_and_run(self, module_name, func_name, folder, params, loop_params=None):
         """
         Import the module and run the function.
         Args:
             module_name (str): The name of the module.
             func_name (str): The name of the function.
             folder (str): The folder of the pipeline.
+            loop_params (dict, optional):
+                Dictionary with keys: 'min_interval_seconds' and 'max_duration_seconds'
+                If provided, the pipelines will be run in a loop with the given minimum interval and maximum duration.
         """
         if module_name.startswith('.'):
             module_name = module_name.lstrip('.')
@@ -283,7 +287,6 @@ class SuperOrchestrator:
                 force_caching=True,
                 environment=environment
             )
-            pipeline.execute()
         else:
             (super_spark, _, logger, _, superlake_dt, super_tracer, environment) = params
             table, generator = func(*params[:5])
@@ -301,6 +304,10 @@ class SuperOrchestrator:
                 table=table,
                 environment=environment
             )
+        # Use loop_execute if either min_interval_seconds or max_duration_seconds is set, else execute
+        if loop_params is not None:
+            pipeline.loop_execute(min_interval_seconds=loop_params['min_interval_seconds'], max_duration_seconds=loop_params['max_duration_seconds'])
+        else:
             pipeline.execute()
 
     def get_parallel_groups(self, graph, mode='process_first'):
@@ -359,40 +366,44 @@ class SuperOrchestrator:
             raise ValueError(f"Invalid mode: {mode}")
 
     def orchestrate(
-            self,
-            loading_mode='file',
-            orchestration_mode='process_last',
-            target_pipelines=None,
-            direction='all',
-            parallelize_groups=False,
-            fail_fast=True,
-            skip_downstream_on_failure=False
-            ):
+        self,
+        loading_mode='file',
+        ordering_mode='process_first',
+        target_pipelines=None,
+        direction='all',
+        parallelize_pipelines=False,
+        fail_fast=True,
+        skip_downstream_on_failure=False,
+        loop_params: Optional[Dict[str, Any]] = None
+    ):
         """
         Orchestrate the execution of data pipelines with dependency management, parallelization, and robust error handling.
 
         Parameters:
             loading_mode (str):
                 How to discover and load pipeline files. Typical value: 'file'.
-            orchestration_mode (str):
+            ordering_mode (str):
                 The order in which pipeline groups are processed.
                 - 'process_first': Roots to leaves (upstream to downstream).
                 - 'process_last': Leaves to roots (downstream to upstream).
             target_pipelines (list of str):
-                List of pipeline filenames (e.g., ['velib_station_info.py']) to use as starting points for orchestration.
+                List of pipeline filenames (e.g., ['velib_station_info']) to use as starting points for orchestration.
             direction (str):
                 Which part of the dependency graph to process relative to target_pipelines:
                 - 'upstream': Only dependencies of the targets (and the targets themselves).
                 - 'downstream': Only dependents of the targets (and the targets themselves).
                 - 'all': Both upstream and downstream pipelines (full subgraph).
                 - 'none': Only the specified target_pipelines, with no dependencies.
-            parallelize_groups (bool):
+            parallelize_pipelines (bool):
                 If True, pipelines within each group are run in parallel threads. If False, run serially.
             fail_fast (bool):
                 If True, stop execution as soon as any pipeline fails. If False, log errors and continue.
             skip_downstream_on_failure (bool):
                 If True, a pipeline will be skipped if all of its upstream dependencies (from the full dependency graph) have failed or been skipped.
                 If False, downstream pipelines are always run.
+            loop_params (dict, optional):
+                Dictionary with keys: 'min_interval_seconds' and 'max_duration_seconds'
+                If provided, the pipelines will be run in a loop with the given minimum interval and maximum duration.
 
         Features:
             - Dependency graph analysis: Automatically discovers dependencies between pipeline files.
@@ -403,18 +414,85 @@ class SuperOrchestrator:
             - Partial graph execution: Orchestrate only a subset of the full pipeline graph by specifying target_pipelines and direction.
             - Cascading skips: If a pipeline is skipped due to all upstreams failing/skipped, its downstreams will also be skipped in cascade.
         """
+
+        def run_pipeline(fname, error_list=None):
+            with self.logger.sub_name_context('SuperOrchestrator'):
+                if should_skip_pipeline(fname):
+                    self.logger.info(f"Skipping {fname} because all upstream dependencies failed or were skipped.")
+                    with pipeline_status_lock:
+                        pipeline_status[fname] = 'skipped'
+                    return
+                try:
+                    self.logger.info(f"Running {fname}...")
+                    file_path = name_map[fname]
+                    module_name, func_name, folder = self.get_module_and_func(file_path)
+                    self.logger.info(f"Running {module_name}.{func_name} as a {folder} pipeline...")
+                    self.import_and_run(
+                        module_name,
+                        func_name,
+                        folder,
+                        params,
+                        loop_params=loop_params
+                    )
+                    with pipeline_status_lock:
+                        pipeline_status[fname] = 'success'
+                except Exception as e:
+                    self.logger.error(f"Pipeline {fname} failed: {e}", exc_info=True)
+                    with pipeline_status_lock:
+                        pipeline_status[fname] = 'failed'
+                    if error_list is not None:
+                        error_list.append(e)
+                    if fail_fast:
+                        raise
+
+        def should_skip_pipeline(fname):
+            if not skip_downstream_on_failure:
+                return False
+            # Use full_graph to get all true upstreams (dependencies of fname)
+            all_upstreams = full_graph.get(fname, [])
+            if not all_upstreams:
+                return False
+            with pipeline_status_lock:
+                return all(
+                    (up not in pipeline_status and up not in graph) or pipeline_status.get(up) in ('failed', 'skipped')
+                    for up in all_upstreams
+                )
+
+        def run_in_parallel(group):
+            threads = []
+            errors = []
+            errors_lock = threading.Lock()
+            fail_event = threading.Event()
+
+            def thread_run(fname):
+                if fail_event.is_set():
+                    return
+                try:
+                    run_pipeline(fname, error_list=errors)
+                except Exception as e:
+                    with errors_lock:
+                        errors.append(e)
+                    fail_event.set()
+
+            for fname in group:
+                t = threading.Thread(target=thread_run, args=(fname,))
+                t.start()
+                threads.append(t)
+            for t in threads:
+                t.join()
+            if fail_fast and errors:
+                raise errors[0]
+
         if target_pipelines is None:
             target_pipelines = []
         with self.logger.sub_name_context('SuperOrchestrator'):
             # managing dependencies through files
-            self.logger.info(f"Orchestrating pipelines in {loading_mode} mode with {orchestration_mode} orchestration mode")
+            self.logger.info(f"Orchestrating pipelines in {loading_mode} mode with {ordering_mode} orchestration mode")
             if loading_mode == 'file':
                 py_files = self.discover_files(self.BASE_DIRS)
                 graph, name_map = self.build_graph(py_files)
-
                 # Save the full dependency graph before filtering
                 full_graph = graph.copy()
-
                 # If target_pipelines are specified, filter the graph
                 if target_pipelines:
                     # Ensure all are .py and exist
@@ -448,7 +526,6 @@ class SuperOrchestrator:
                         # Filter graph and name_map to only include these files
                         graph = {k: [d for d in v if d in deps] for k, v in graph.items() if k in deps}
                         name_map = {k: v for k, v in name_map.items() if k in deps}
-
                 # set the params
                 params = (
                     self.super_spark,
@@ -465,13 +542,13 @@ class SuperOrchestrator:
                     self.logger.error(cycles)
                 else:
                     try:
-                        parallel_groups_list = self.get_parallel_groups(graph, mode=orchestration_mode)
-                        if orchestration_mode == 'process_first':
+                        parallel_groups_list = self.get_parallel_groups(graph, mode=ordering_mode)
+                        if ordering_mode == 'process_first':
                             groups_in_order = parallel_groups_list
-                        elif orchestration_mode == 'process_last':
+                        elif ordering_mode == 'process_last':
                             groups_in_order = list(reversed(parallel_groups_list))
                         else:
-                            raise ValueError(f"Invalid orchestration mode: {orchestration_mode}")
+                            raise ValueError(f"Invalid orchestration mode: {ordering_mode}")
                         # display the orchestration plan in a readable format
                         print("-------------------------------  SuperOrchestrator -------------------------------", flush=True)
                         print("\nbase directories:", flush=True)
@@ -488,13 +565,14 @@ class SuperOrchestrator:
                                 display_path = file
                             print(f"  - {display_path}", flush=True)
                         print("\nParameters:", flush=True)
-                        print(f" - loading mode: {loading_mode}", flush=True)
-                        print(f" - target pipelines: {target_pipelines}", flush=True)
-                        print(f" - orchestration mode: {orchestration_mode}", flush=True)
-                        print(f" - direction: {direction}", flush=True)
-                        print(f" - parallelize groups: {parallelize_groups}", flush=True)
-                        print(f" - fail fast: {fail_fast}", flush=True)
+                        print(f" - loading mode:               {loading_mode}", flush=True)
+                        print(f" - target pipelines:           {target_pipelines}", flush=True)
+                        print(f" - orchestration mode:         {ordering_mode}", flush=True)
+                        print(f" - direction:                  {direction}", flush=True)
+                        print(f" - parallelize pipelines:      {parallelize_pipelines}", flush=True)
+                        print(f" - fail fast:                  {fail_fast}", flush=True)
                         print(f" - skip downstream on failure: {skip_downstream_on_failure}", flush=True)
+                        print(f" - loop params:                {loop_params}", flush=True)
                         print("\nOrchestration plan:", flush=True)
                         for i, group in enumerate(groups_in_order, 1):
                             rel_paths = [os.path.relpath(name_map[f], os.path.commonpath(self.BASE_DIRS)) for f in group]
@@ -510,76 +588,28 @@ class SuperOrchestrator:
                         # Track pipeline status
                         pipeline_status = {}
                         pipeline_status_lock = threading.Lock()
-                        # run the orchestration plan
-                        for i, group in enumerate(groups_in_order, 1):
-                            rel_paths = [os.path.relpath(name_map[f], os.path.commonpath(self.BASE_DIRS)) for f in group]
-                            self.logger.info(f"Processing orchestration group {i}")
+                        # run the orchestration plan in parallel loop mode
+                        parallelize_groups = True if loop_params else False
+                        if parallelize_groups:
+                            # Flatten all groups into a single list of pipelines
+                            all_pipelines = [fname for group in groups_in_order for fname in group]
+                            self.logger.info("Processing all stages in parallel...")
+                            rel_paths = [os.path.relpath(name_map[f], os.path.commonpath(self.BASE_DIRS)) for f in all_pipelines]
                             self.logger.info(f"files to run: {rel_paths}")
-
-                            def should_skip_pipeline(fname):
-                                if not skip_downstream_on_failure:
-                                    return False
-                                # Use full_graph to get all true upstreams (dependencies of fname)
-                                all_upstreams = full_graph.get(fname, [])
-                                if not all_upstreams:
-                                    return False
-                                with pipeline_status_lock:
-                                    return all(
-                                        (up not in pipeline_status and up not in graph) or pipeline_status.get(up) in ('failed', 'skipped')
-                                        for up in all_upstreams
-                                    )
-
-                            def run_pipeline(fname, error_list=None):
-                                with self.logger.sub_name_context('SuperOrchestrator'):
-                                    if should_skip_pipeline(fname):
-                                        self.logger.info(f"Skipping {fname} because all upstream dependencies failed or were skipped.")
-                                        with pipeline_status_lock:
-                                            pipeline_status[fname] = 'skipped'
-                                        return
-                                    try:
-                                        self.logger.info(f"Running {fname}...")
-                                        file_path = name_map[fname]
-                                        module_name, func_name, folder = self.get_module_and_func(file_path)
-                                        self.logger.info(f"Running {module_name}.{func_name} as a {folder} pipeline...")
-                                        self.import_and_run(module_name, func_name, folder, params)
-                                        with pipeline_status_lock:
-                                            pipeline_status[fname] = 'success'
-                                    except Exception as e:
-                                        self.logger.error(f"Pipeline {fname} failed: {e}", exc_info=True)
-                                        with pipeline_status_lock:
-                                            pipeline_status[fname] = 'failed'
-                                        if error_list is not None:
-                                            error_list.append(e)
-                                        if fail_fast:
-                                            raise
-
-                            if parallelize_groups:
-                                threads = []
-                                errors = []
-                                errors_lock = threading.Lock()
-                                fail_event = threading.Event()
-
-                                def thread_run(fname):
-                                    if fail_event.is_set():
-                                        return
-                                    try:
-                                        run_pipeline(fname, error_list=errors)
-                                    except Exception as e:
-                                        with errors_lock:
-                                            errors.append(e)
-                                        fail_event.set()
-
-                                for fname in group:
-                                    t = threading.Thread(target=thread_run, args=(fname,))
-                                    t.start()
-                                    threads.append(t)
-                                for t in threads:
-                                    t.join()
-                                if fail_fast and errors:
-                                    raise errors[0]
-                            else:
-                                for fname in group:
-                                    run_pipeline(fname)
+                            # run pipelines in parallel
+                            run_in_parallel(all_pipelines)
+                        # run the orchestration plan in sequential group mode
+                        else:
+                            for i, group in enumerate(groups_in_order, 1):
+                                self.logger.info(f"Processing orchestration group {i}...")
+                                rel_paths = [os.path.relpath(name_map[f], os.path.commonpath(self.BASE_DIRS)) for f in group]
+                                self.logger.info(f"files to run: {rel_paths}")
+                                # run pipelines in parallel or sequentially
+                                if parallelize_pipelines:
+                                    run_in_parallel(group)
+                                else:
+                                    for fname in group:
+                                        run_pipeline(fname)
                     except RuntimeError as e:
                         self.logger.error(f"Orchestration error: {str(e)}")
             else:

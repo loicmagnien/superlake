@@ -394,14 +394,14 @@ class SuperDeltaTable:
                 catalog_name = self.catalog_name or self.super_spark.catalog_name
                 schemas_in_catalog = spark.sql(
                     f"SHOW DATABASES IN {catalog_name}"
-                    ).toPandas()["databaseName"].tolist()
+                ).toPandas()["databaseName"].tolist()
                 if self.schema_name not in schemas_in_catalog:
                     return False
                 else:
                     # check if the table exists
                     tables_in_catalog = spark.sql(
                         f"SHOW TABLES IN {catalog_name}.{self.schema_name}"
-                        ).toPandas()["tableName"].tolist()
+                    ).toPandas()["tableName"].tolist()
                     if self.table_name not in tables_in_catalog:
                         return False
                     return True
@@ -515,12 +515,12 @@ class SuperDeltaTable:
             )
 
     def create_uc_table_foreign_keys(
-            self,
-            force_create: bool = False,
-            foreign_keys: Optional[list] = None,
-            spark: Optional[SparkSession] = None,
-            log: bool = True
-            ):
+        self,
+        force_create: bool = False,
+        foreign_keys: Optional[list] = None,
+        spark: Optional[SparkSession] = None,
+        log: bool = True
+    ) -> DataFrame:
         """
         For Unity Catalog tables, add foreign key constraints after table creation using ALTER TABLE ... ADD CONSTRAINT ...
         Also performs quality checks and returns a DQ DataFrame of FK issues.
@@ -719,11 +719,11 @@ class SuperDeltaTable:
             return fk_issues_df
 
     def create_uc_table_primary_keys(
-            self,
-            force_create: bool = False,
-            primary_keys: Optional[list] = None,
-            spark: Optional[SparkSession] = None
-            ) -> DataFrame:
+        self,
+        force_create: bool = False,
+        primary_keys: Optional[list] = None,
+        spark: Optional[SparkSession] = None
+    ) -> DataFrame:
         """
         For Unity Catalog tables, add a primary key constraint after table creation using
         ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY (...).
@@ -963,7 +963,7 @@ class SuperDeltaTable:
                 if self.delta_properties:
                     properties_sql = " TBLPROPERTIES (" + ", ".join(
                         [f"'{k}'='{v}'" for k, v in self.delta_properties.items()]
-                        ) + ")"
+                    ) + ")"
                 # Generate the full sql query
                 sql_query = f"""
                         CREATE TABLE IF NOT EXISTS {self.full_table_name()} (
@@ -1107,9 +1107,9 @@ class SuperDeltaTable:
         spark.sql(optimize_sql)
         t3 = time.time()
         self.logger.info(f"Optimized table {self.full_table_name()} ({'managed' if self.managed else 'external'})")
-        self.logger.metric("optimize_table_creation_duration_sec", round(t1-t0, 2))
-        self.logger.metric("optimize_table_optimization_duration_sec", round(t3-t2, 2))
-        self.logger.metric("optimize_table_total_duration_sec", round(t3-t0, 2))
+        self.logger.metric("optimize_table_creation_duration_sec", round(t1 - t0, 2))
+        self.logger.metric("optimize_table_optimization_duration_sec", round(t3 - t2, 2))
+        self.logger.metric("optimize_table_total_duration_sec", round(t3 - t0, 2))
 
     def vacuum(self, spark: Optional[SparkSession] = None, retention_hours: int = 168):
         """
@@ -1130,9 +1130,9 @@ class SuperDeltaTable:
         spark.sql(f"VACUUM {self.full_table_name()} RETAIN {retention_hours} HOURS")
         t2 = time.time()
         self.logger.info(f"Vacuumed table {self.full_table_name()} with retention {retention_hours} hours")
-        self.logger.metric("vacuum_table_creation_duration_sec", round(t1-t0, 2))
-        self.logger.metric("vacuum_table_vacuum_duration_sec", round(t2-t1, 2))
-        self.logger.metric("vacuum_table_total_duration_sec", round(t2-t0, 2))
+        self.logger.metric("vacuum_table_creation_duration_sec", round(t1 - t0, 2))
+        self.logger.metric("vacuum_table_vacuum_duration_sec", round(t2 - t1, 2))
+        self.logger.metric("vacuum_table_total_duration_sec", round(t2 - t0, 2))
 
     def read(self, spark: Optional[SparkSession] = None) -> DataFrame:
         """
@@ -1194,8 +1194,6 @@ class SuperDeltaTable:
                     writer.saveAsTable(self.full_table_name())
                 else:
                     writer.save(self.table_path)
-            else:
-                self.logger.info(f"No new columns to add for {self.full_table_name()}. Skipping ALTER TABLE.")
 
     def align_df_to_table_schema(self, df, spark: Optional[SparkSession] = None):
         """
@@ -1267,13 +1265,13 @@ class SuperDeltaTable:
         return target_table
 
     def write_df(
-            self,
-            df: DataFrame,
-            mode: str,
-            merge_schema: bool = False,
-            overwrite_schema: bool = False,
-            spark: Optional[SparkSession] = None
-            ) -> None:
+        self,
+        df: DataFrame,
+        mode: str,
+        merge_schema: bool = False,
+        overwrite_schema: bool = False,
+        spark: Optional[SparkSession] = None
+    ) -> None:
         """
         Write a DataFrame to a Delta table.
         Args:
@@ -1755,12 +1753,12 @@ class SuperDeltaTable:
             DataFrame of PK drop issues (DQ style)
         """
         dq_schema = StructType([
-                StructField("table_name", StringType(), True),
-                StructField("column_name", StringType(), True),
-                StructField("check_key", StringType(), True),
-                StructField("check_value", StringType(), True),
-                StructField("check_dt", TimestampType(), True),
-            ])
+            StructField("table_name", StringType(), True),
+            StructField("column_name", StringType(), True),
+            StructField("check_key", StringType(), True),
+            StructField("check_value", StringType(), True),
+            StructField("check_dt", TimestampType(), True),
+        ])
         if spark is None:
             spark = self.spark
         if not self.is_unity_catalog():
@@ -1811,12 +1809,12 @@ class SuperDeltaTable:
             DataFrame of FK drop issues (DQ style)
         """
         dq_schema = StructType([
-                StructField("table_name", StringType(), True),
-                StructField("column_name", StringType(), True),
-                StructField("check_key", StringType(), True),
-                StructField("check_value", StringType(), True),
-                StructField("check_dt", TimestampType(), True),
-            ])
+            StructField("table_name", StringType(), True),
+            StructField("column_name", StringType(), True),
+            StructField("check_key", StringType(), True),
+            StructField("check_value", StringType(), True),
+            StructField("check_dt", TimestampType(), True),
+        ])
         if spark is None:
             spark = self.spark
         if not self.is_unity_catalog():
