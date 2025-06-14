@@ -91,14 +91,12 @@
   - `table_name`, `column_name`, `check_key`, `check_value`, `check_dt`
 - Descriptive DQ Messages: Each issue includes a clear, actionable message.
 - Batch DQ Persistence: DQ issues from all tables are collected and written in a single batch for performance.
-- Native PySpark Union: DQ DataFrames are combined using `unionByName` for robust schema alignment.
 - Cleaner, Consistent DQ Table: Easier to query, join, and monitor.
 
 ## Alerting & Notifications
 - Custom alert rules and severity levels (info, warning, error, critical)
-- Handlers for email, Slack, Teams, and custom integrations
+- Handlers for email, Slack, Teams, and custom integrations (in progress)
 - Real-time notifications based on metrics or pipeline events
-
 
 ## Metrics & Data Quality
 - Table, data quality, performance, and storage metrics
@@ -274,6 +272,7 @@ The `SuperPipeline` class manages a full medallion pipeline (bronze → silver),
   - **Automatic Deduplication**: Handles duplicate source rows during merge/upsert operations.
   - **Performance Optimization**: Optionally caches intermediate DataFrames for large data processing.
   - **Debug and Test Friendly**: Provides debug/test modes for easier development and troubleshooting.
+  - **Micro-batching Support**: Supports both batch and micro-batch execution modes for different use cases.
 
 ### Congiguration
 
@@ -313,6 +312,10 @@ pipeline = SuperPipeline(
 )
 pipeline.execute()
 ```
+
+The `pipeline.execute()` method takes a `pipeline_mode` argument: 
+- `batch`: processes the pipeline in batch mode using `execute_batch()`
+- `micro_batch`: processes the pipeline as a stream of micro-batches using `execute_micro_batch()`
 
 ## SuperSimplePipeline
 
@@ -368,6 +371,7 @@ The `SuperOrchestrator` class provides robust orchestration for your data pipeli
 - **Partial graph execution:** Orchestrate only a subset of the full pipeline graph by specifying targets and direction.
 - **Cascading skips:** If a pipeline is skipped due to all upstreams failing/skipped, its downstreams will also be skipped in cascade.
 - **Parallel execution:** Optionally run pipeline groups in parallel threads for faster orchestration.
+- **Loop Execution**: Can run pipelines in loops with configurable intervals and duration limits.
 
 
 ### Configuration
